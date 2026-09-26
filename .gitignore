@@ -1,0 +1,32 @@
+# OS / editors
+.DS_Store
+.idea/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# Node / Yarn
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# AWS CDK (cdk.context.json is committed on purpose: it pins AMI lookups)
+cdk.out/
