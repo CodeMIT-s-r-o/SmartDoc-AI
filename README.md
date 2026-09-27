@@ -6,7 +6,9 @@ Invited users upload internal PDFs (manuals, policies) and chat with them. Answe
 and every user sees only their own documents. Every LLM token is accounted for, and every cost or quality claim is backed
 by a number the repo can reproduce.
 
-**Status:** planning is complete; implementation has not started. Start with [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
+**Status:** Block 0 scaffold. The local stack runs (`make up`) and every service reports healthy, but no product
+features exist yet. Progress is tracked in [docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan is in
+[docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
 The planned demo URL is https://smartdoc.codemit.sk.
 
 ---
@@ -148,43 +150,50 @@ _No eval results yet._
 
 Full threat table: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §9.
 
-## Repository layout (planned)
+## Repository layout
 
 ```
-apps/web            React SPA
-apps/api            NestJS API, Drizzle schema and migrations
-services/ai         FastAPI RAG service and ingestion worker
-packages/contracts  Shared SSE event schemas and generated API types
-eval/               Golden datasets, eval harness, committed results
-infra/cdk           AWS CDK stacks (CI, storage, auth, compute, edge)
-deploy/             Production compose file, Caddyfile, deploy scripts
-docs/               Plan, PRD, architecture, ADRs, interview notes, build log
+apps/web            React SPA (Vite)
+apps/api            NestJS API; Drizzle schema and migrations from Block 1.3
+services/ai         FastAPI RAG service and ingestion worker (uv, Python 3.13)
+packages/contracts  Shared SSE event schemas (zod)
+deploy/             Postgres role bootstrap; production compose, Caddyfile and deploy scripts later
+docs/               Plan, ADRs, build log; PRD, architecture and interview notes later
+eval/               (Weekend 2) golden datasets, eval harness, committed results
+infra/cdk           (Block 1.2) AWS CDK stacks: CI, storage, auth, compute, edge
 ```
 
-## Getting started (planned)
-
-This section does not work yet. It describes how local development will work once Weekend 1 is done.
+## Getting started
 
 **Prerequisites:**
 - Docker.
-- Node 24+ with Yarn 4 (Corepack).
-- uv.
-- An AWS SSO profile with the dev stacks deployed.
-- An OpenAI API key.
+- Node 24+ and any global `yarn`. The repo vendors Yarn 4 in `.yarn/releases`, so Corepack is not needed.
+- [uv](https://docs.astral.sh/uv/). It installs Python 3.13 by itself.
+- An OpenAI API key, only for `make spike` and, later, ingestion and chat.
 
 ```bash
-cp .env.example .env   # add your OpenAI key
-make creds             # export short-lived credentials for the dev app role
-make up                # start db, migrate, api, ai, ai-worker and web
-make test              # unit and integration tests
-make eval              # run the eval harness
+make install   # host dependencies for editors and tests (yarn + uv)
+make up        # creates .env on first run, builds and starts the stack, waits until healthy
+make check     # lint, type-check and test TypeScript and Python
+make spike     # OpenAI API spike (needs OPENAI_API_KEY in .env, costs < $0.01)
 ```
 
-Locally, Cognito and S3 are real dev resources. There is no emulator, because Cognito has no reliable one.
+| URL | Service |
+|---|---|
+| http://localhost:5173 | Web app (proxies `/api` to the API) |
+| http://localhost:3000/api/health | API health: database and AI service status |
+| http://localhost:8000/internal/health | AI service health (internal network only in production) |
+
+Source folders are bind-mounted, so the API, the AI service and the web app reload on save.
+From Block 1.2, Cognito and S3 are real dev resources; there is no emulator, because Cognito has
+no reliable one. `make help` lists all targets.
 
 ## Roadmap
 
 - [ ] **Block 0.** Accounts, OpenAI API spike (streaming and prompt caching), toolchain.
+  - [x] toolchain and monorepo scaffold (NestJS 12, Vite, FastAPI, Postgres + pgvector), `make up` healthy;
+  - [ ] OpenAI spike (script ready: `make spike`);
+  - [ ] accounts: OpenAI projects and limits, AWS eligibility check, corpus PDFs.
 - [ ] **Weekend 1: local MVP.**
   - compose stack and Drizzle schema;
   - Cognito auth;
@@ -209,8 +218,10 @@ Locally, Cognito and S3 are real dev resources. There is no emulator, because Co
 | [docs/planning/research/](docs/planning/research/) | Research reports with sources (LLM cost, Python stack, AWS, evaluation) |
 | [docs/planning/reviews/](docs/planning/reviews/) | Adversarial reviews: interviewer, security/correctness, feasibility/cost |
 | [docs/planning/draft-plan-v1.md](docs/planning/draft-plan-v1.md) | The draft plan as it stood before review |
+| [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
+| [docs/adr/](docs/adr/) | Architecture decision records (1 of 10 so far) |
 
-Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/adr/` (10 ADRs), `docs/INTERVIEW.md` and `docs/BUILD_LOG.md`.
+Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, the remaining ADRs and `docs/INTERVIEW.md`.
 
 ## License
 
