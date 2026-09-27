@@ -12,6 +12,7 @@ COPY --chown=node:node .yarn/releases .yarn/releases
 COPY --chown=node:node apps/api/package.json apps/api/
 COPY --chown=node:node apps/web/package.json apps/web/
 COPY --chown=node:node packages/contracts/package.json packages/contracts/
+COPY --chown=node:node infra/cdk/package.json infra/cdk/
 RUN yarn workspaces focus @smartdoc/web
 
 FROM deps AS dev

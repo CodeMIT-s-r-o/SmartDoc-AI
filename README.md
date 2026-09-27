@@ -6,8 +6,8 @@ Invited users upload internal PDFs (manuals, policies) and chat with them. Answe
 and every user sees only their own documents. Every LLM token is accounted for, and every cost or quality claim is backed
 by a number the repo can reproduce.
 
-**Status:** Block 0 scaffold. The local stack runs (`make up`) and every service reports healthy, but no product
-features exist yet. Progress is tracked in [docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan is in
+**Status:** Weekend 1 in progress. The local stack runs (`make up`) and the dev AWS resources (Cognito, S3) are
+deployed with CDK, but no product features exist yet. Progress is tracked in [docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan is in
 [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
 The planned demo URL is https://smartdoc.codemit.sk.
 
@@ -160,7 +160,7 @@ packages/contracts  Shared SSE event schemas (zod)
 deploy/             Postgres role bootstrap; production compose, Caddyfile and deploy scripts later
 docs/               Plan, ADRs, build log; PRD, architecture and interview notes later
 eval/               (Weekend 2) golden datasets, eval harness, committed results
-infra/cdk           (Block 1.2) AWS CDK stacks: CI, storage, auth, compute, edge
+infra/cdk           AWS CDK stacks: storage and auth now; CI, compute and edge in Weekend 2
 ```
 
 ## Getting started
@@ -185,8 +185,9 @@ make spike     # OpenAI API spike (needs OPENAI_API_KEY in .env, costs < $0.01)
 | http://localhost:8000/internal/health | AI service health (internal network only in production) |
 
 Source folders are bind-mounted, so the API, the AI service and the web app reload on save.
-From Block 1.2, Cognito and S3 are real dev resources; there is no emulator, because Cognito has
-no reliable one. `make help` lists all targets.
+Cognito and S3 are real dev resources; there is no emulator, because Cognito has no reliable one.
+One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbooks/dev-aws.md).
+`make help` lists all targets.
 
 ## Roadmap
 

@@ -6,7 +6,14 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', '.yarn/**', 'services/**'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/cdk.out/**',
+      '.yarn/**',
+      'services/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
