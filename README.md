@@ -181,7 +181,7 @@ make spike     # OpenAI API spike (needs OPENAI_API_KEY in .env, costs < $0.01)
 
 | URL | Service |
 |---|---|
-| http://localhost:5173 | Web app (proxies `/api` to the API) |
+| http://localhost:5173 | Web app: sign in with your invite (proxies `/api` to the API) |
 | http://localhost:3000/api/health | API health: database and AI service status |
 | http://localhost:8000/internal/health | AI service health (internal network only in production) |
 

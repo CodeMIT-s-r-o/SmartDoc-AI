@@ -9,8 +9,9 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 0.2 OpenAI spike | 1 h | | script ready | `make spike` once `OPENAI_API_KEY` is in `.env`; record results below |
 | 0.3 Toolchain | 1 h | 0.3 h | done | NestJS 12 kept; see surprises |
 | 1.1 Compose, Dockerfiles, health | 2 h | 0.3 h | done | `make creds` done in 1.2 |
-| 1.2 CDK dev Storage + Auth, invite | 1.5 h | 0.5 h | deployed; sign-in test pending | see 2026-09-27 |
+| 1.2 CDK dev Storage + Auth, invite | 1.5 h | 0.5 h | done (sign-in verified in 1.4) | see 2026-09-27 |
 | 1.3 Drizzle schema, custom SQL, migrate | 2 h | 0.2 h | done | see 2026-09-27 (Block 1.3) |
+| 1.4 Auth end to end | 2 h | 0.4 h | done | see 2026-09-28 |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -88,3 +89,33 @@ before api, ai and ai-worker start. `make test-db` runs 13 schema contract tests
 - **Price check:** OpenAI's pricing page appeared to show gpt-5.6-luna output at $0.75, while the
   model page, which is authoritative, shows $1.20. The seed uses $1.20 and cites the model page.
 - Status columns are `text` + `CHECK`, not Postgres enums.
+
+## 2026-09-28: Block 1.4 (authentication)
+
+**Result:** the SPA signs in through Cognito managed login (authorization code + PKCE,
+react-oidc-context, tokens in sessionStorage, refresh-token renewal) and signs out by revoking the
+refresh token, clearing the session and calling Cognito's `/logout`. NestJS verifies access tokens
+in a global guard, creates the `users` row on first sight (email from `/oauth2/userInfo`), serves
+`/api/me` and rate-limits per user.
+
+**Verified:**
+- 18 API e2e tests with tokens signed by a test key and checked by the real `aws-jwt-verify`
+  verifier (production config, JWKS preloaded). **401** for: no header, a non-JWT value, a tampered
+  payload, an unknown signing key, an ID token, another app client, another user pool (a dev
+  token against prod), an expired token. 401 bodies never say which check failed.
+- The email lookup runs once per user; `/api/health` stays public and is never throttled.
+- The rate limit is per user: one user hitting the limit gets 429 with `Retry-After`, another
+  user is unaffected.
+- Live stack: the API prefetches the real JWKS at boot; `/api/me` without a token or with a garbage
+  token returns 401 through the Vite proxy; "Sign in" lands on managed login with
+  `code_challenge_method=S256`.
+- **Live sign-in (the invited user, in person):** temporary password replaced (Cognito status
+  `CONFIRMED`), the app shows email, admin role and today's spend, and the first request created
+  the `users` row with the email from userInfo.
+
+**Notes:**
+- Cognito's discovery now lists `end_session_endpoint` and `revocation_endpoint`. Revocation uses
+  oidc-client-ts's standard `revokeTokens()`. Logout still builds Cognito's URL by hand, because
+  `/logout` wants `client_id` + `logout_uri` rather than the OIDC `post_logout_redirect_uri`.
+- **Deferred:** RFC 9457 problem+json errors (Nest's default JSON error shape for now), an OpenAPI
+  document, and the named per-route limits (30 chats/min, 10 uploads/h) until those routes exist.

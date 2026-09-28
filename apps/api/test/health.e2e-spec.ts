@@ -1,42 +1,31 @@
-import 'reflect-metadata';
-import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AppModule } from '../src/app.module.js';
-import { DB } from '../src/db/db.module.js';
+import { createTestApp, type TestApp } from './support/test-app.js';
 
 describe('GET /api/health', () => {
-  let app: INestApplication;
-  const execute = vi.fn();
+  let t: TestApp;
   const fetchMock = vi.fn();
 
   beforeAll(async () => {
     vi.stubGlobal('fetch', fetchMock);
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(DB)
-      .useValue({ execute })
-      .compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api');
-    await app.init();
+    t = await createTestApp();
   });
 
   afterAll(async () => {
-    await app.close();
+    await t.app.close();
     vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
-    execute.mockReset();
+    t.db.execute.mockReset();
     fetchMock.mockReset();
   });
 
-  it('returns 200 when the database is reachable', async () => {
-    execute.mockResolvedValue({ rows: [] });
+  it('returns 200 when the database is reachable, without a token', async () => {
+    t.db.execute.mockResolvedValue({ rows: [] });
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
 
-    const res = await request(app.getHttpServer()).get('/api/health').expect(200);
+    const res = await request(t.app.getHttpServer()).get('/api/health').expect(200);
 
     expect(res.body).toEqual({ status: 'ok', db: 'up', ai: 'up', version: 'test' });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -46,20 +35,30 @@ describe('GET /api/health', () => {
   });
 
   it('reports the AI service without failing when only the AI service is down', async () => {
-    execute.mockResolvedValue({ rows: [] });
+    t.db.execute.mockResolvedValue({ rows: [] });
     fetchMock.mockRejectedValue(new Error('connect ECONNREFUSED'));
 
-    const res = await request(app.getHttpServer()).get('/api/health').expect(200);
+    const res = await request(t.app.getHttpServer()).get('/api/health').expect(200);
 
     expect(res.body).toMatchObject({ status: 'ok', db: 'up', ai: 'down' });
   });
 
   it('returns 503 when the database is unreachable', async () => {
-    execute.mockRejectedValue(new Error('connect ECONNREFUSED'));
+    t.db.execute.mockRejectedValue(new Error('connect ECONNREFUSED'));
     fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
 
-    const res = await request(app.getHttpServer()).get('/api/health').expect(503);
+    const res = await request(t.app.getHttpServer()).get('/api/health').expect(503);
 
     expect(res.body).toMatchObject({ status: 'error', db: 'down' });
+  });
+
+  it('is never rate limited (container health checks)', async () => {
+    t.db.execute.mockResolvedValue({ rows: [] });
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    const limit = Number(process.env.THROTTLE_LIMIT_PER_MINUTE);
+
+    for (let i = 0; i <= limit + 1; i++) {
+      await request(t.app.getHttpServer()).get('/api/health').expect(200);
+    }
   });
 });

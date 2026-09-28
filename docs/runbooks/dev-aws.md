@@ -45,9 +45,10 @@ make up
   aws s3api put-object --profile smartdoc-dev-app --bucket <docs-bucket> --key users/probe/probe.txt --body README.md
   aws s3api put-object --profile smartdoc-dev-app --bucket <docs-bucket> --key probe.txt --body README.md
   ```
-- **Managed login works:** open the URL from `make login-url`, sign in with the invite, set a new
-  password, and land on `http://localhost:5173/auth/callback?code=...`. Until Block 1.4 wires the
-  SPA, the `code` in the URL is the proof of success.
+- **Sign-in works end to end:** open http://localhost:5173, choose "Sign in", use the invite
+  (temporary password, then a new one), and the app shows your email, role and today's spend from
+  `/api/me`. "Sign out" revokes the refresh token and ends the Cognito session.
+  (`make login-url` still prints a bare authorize URL for debugging the managed-login step alone.)
 - **Only `api` holds AWS credentials:**
   ```bash
   for s in api ai ai-worker web; do docker compose exec -T $s sh -c 'env | grep -c ^AWS_SECRET'; done

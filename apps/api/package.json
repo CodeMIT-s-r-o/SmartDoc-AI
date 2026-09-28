@@ -18,6 +18,8 @@
     "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^12.1.0",
     "@nestjs/platform-express": "^12.1.0",
+    "@nestjs/throttler": "^6.7.1",
+    "aws-jwt-verify": "^5.2.1",
     "drizzle-orm": "^0.45.3",
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",

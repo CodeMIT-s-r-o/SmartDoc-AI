@@ -1,50 +1,71 @@
 import { useEffect, useState } from 'react';
+import { useAuth } from 'react-oidc-context';
+import { apiGet, type Me } from './api';
+import { useSignOut } from './auth/useSignOut';
 
-interface HealthReport {
-  status: 'ok' | 'error';
-  db: 'up' | 'down';
-  ai: 'up' | 'down';
-  version: string;
+type MeState =
+  { kind: 'loading' } | { kind: 'loaded'; me: Me } | { kind: 'failed'; message: string };
+
+const page = { fontFamily: 'system-ui, sans-serif', maxWidth: 640, margin: '4rem auto' } as const;
+
+/** Placeholder shell for Block 1.4: sign in, show the profile from /api/me, sign out. */
+export function App() {
+  const auth = useAuth();
+
+  if (auth.isLoading) {
+    return <main style={page}>Loading…</main>;
+  }
+  if (auth.error) {
+    return (
+      <main style={page}>
+        <h1>SmartDoc AI</h1>
+        <p>Sign-in failed: {auth.error.message}</p>
+        <button onClick={() => void auth.signinRedirect()}>Try again</button>
+      </main>
+    );
+  }
+  if (!auth.isAuthenticated || !auth.user) {
+    return (
+      <main style={page}>
+        <h1>SmartDoc AI</h1>
+        <p>Production-grade RAG with measured cost controls. Access is by invitation.</p>
+        <button onClick={() => void auth.signinRedirect()}>Sign in</button>
+      </main>
+    );
+  }
+  return <SignedIn accessToken={auth.user.access_token} />;
 }
 
-type HealthState =
-  | { kind: 'loading' }
-  | { kind: 'loaded'; report: HealthReport }
-  | { kind: 'failed'; message: string };
-
-/** Placeholder shell: proves the web -> api -> db/ai path works end to end. */
-export function App() {
-  const [health, setHealth] = useState<HealthState>({ kind: 'loading' });
+function SignedIn({ accessToken }: { accessToken: string }) {
+  const signOut = useSignOut();
+  const [state, setState] = useState<MeState>({ kind: 'loading' });
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/health', { signal: controller.signal })
-      .then(async (res) =>
-        setHealth({ kind: 'loaded', report: (await res.json()) as HealthReport }),
-      )
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          setHealth({ kind: 'failed', message: String(error) });
-        }
-      });
-    return () => controller.abort();
-  }, []);
+    let active = true;
+    apiGet<Me>('/me', accessToken)
+      .then((me) => active && setState({ kind: 'loaded', me }))
+      .catch((error: unknown) => active && setState({ kind: 'failed', message: String(error) }));
+    return () => {
+      active = false;
+    };
+  }, [accessToken]);
 
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 640, margin: '4rem auto' }}>
+    <main style={page}>
       <h1>SmartDoc AI</h1>
-      <p>Production-grade RAG with measured cost controls.</p>
-      <h2>System status</h2>
-      {health.kind === 'loading' && <p>Checking…</p>}
-      {health.kind === 'failed' && <p>API unreachable: {health.message}</p>}
-      {health.kind === 'loaded' && (
+      {state.kind === 'loading' && <p>Loading profile…</p>}
+      {state.kind === 'failed' && <p>Could not load your profile: {state.message}</p>}
+      {state.kind === 'loaded' && (
         <ul>
-          <li>API: {health.report.status}</li>
-          <li>Database: {health.report.db}</li>
-          <li>AI service: {health.report.ai}</li>
-          <li>Version: {health.report.version}</li>
+          <li>Signed in as {state.me.email}</li>
+          <li>Role: {state.me.isAdmin ? 'admin' : 'member'}</li>
+          <li>
+            Spent today: ${state.me.spentTodayUsd.toFixed(4)} of $
+            {state.me.dailyLimitUsd.toFixed(2)}
+          </li>
         </ul>
       )}
+      <button onClick={() => void signOut()}>Sign out</button>
     </main>
   );
 }

@@ -27,6 +27,7 @@ AWS_REGION=${region}
 S3_DOCS_BUCKET=$(get docs_bucket)
 COGNITO_USER_POOL_ID=$(get cognito_user_pool_id)
 COGNITO_CLIENT_ID=$(get cognito_client_id)
+COGNITO_DOMAIN=$(get cognito_domain)
 VITE_OIDC_AUTHORITY=$(get oidc_authority)
 VITE_OIDC_CLIENT_ID=$(get cognito_client_id)
 VITE_OIDC_REDIRECT_URI=http://localhost:5173/auth/callback
