@@ -11,6 +11,9 @@ export const envSchema = z.object({
   COGNITO_CLIENT_ID: z.string().min(1),
   /** Managed-login domain, e.g. https://smartdoc-dev-codemit.auth.eu-central-1.amazoncognito.com */
   COGNITO_DOMAIN: z.url(),
+  AWS_REGION: z.string().default('eu-central-1'),
+  /** Private docs bucket; credentials come from the default chain (instance role, or make creds). */
+  S3_DOCS_BUCKET: z.string().min(3),
   THROTTLE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
   /** Reverse proxies in front of the API: 0 locally, 2 in prod (CloudFront + Caddy). */
   TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().default(0),

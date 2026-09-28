@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from 'react-oidc-context';
-import { apiGet, type Me } from './api';
+import { api, type Me } from './api';
 import { useSignOut } from './auth/useSignOut';
+import { DocumentsPanel } from './documents/DocumentsPanel';
 
 type MeState =
   { kind: 'loading' } | { kind: 'loaded'; me: Me } | { kind: 'failed'; message: string };
 
 const page = { fontFamily: 'system-ui, sans-serif', maxWidth: 640, margin: '4rem auto' } as const;
 
-/** Placeholder shell for Block 1.4: sign in, show the profile from /api/me, sign out. */
+/** App shell: sign in, the caller's profile from /api/me, documents, sign out. */
 export function App() {
   const auth = useAuth();
 
@@ -42,7 +43,7 @@ function SignedIn({ accessToken }: { accessToken: string }) {
 
   useEffect(() => {
     let active = true;
-    apiGet<Me>('/me', accessToken)
+    api<Me>('GET', '/me', accessToken)
       .then((me) => active && setState({ kind: 'loaded', me }))
       .catch((error: unknown) => active && setState({ kind: 'failed', message: String(error) }));
     return () => {
@@ -66,6 +67,7 @@ function SignedIn({ accessToken }: { accessToken: string }) {
         </ul>
       )}
       <button onClick={() => void signOut()}>Sign out</button>
+      <DocumentsPanel accessToken={accessToken} />
     </main>
   );
 }

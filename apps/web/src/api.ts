@@ -1,10 +1,42 @@
-/** Same-origin API calls with the caller's access token. */
-export async function apiGet<T>(path: string, accessToken: string): Promise<T> {
+/** RFC 9457 problem details returned by the API for every error. */
+export interface Problem {
+  status: number;
+  code: string;
+  detail: string;
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    detail: string,
+  ) {
+    super(detail);
+  }
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  const problem = (await res.json().catch(() => undefined)) as Partial<Problem> | undefined;
+  return new ApiError(res.status, problem?.code ?? 'UNKNOWN', problem?.detail ?? res.statusText);
+}
+
+/** Same-origin API call with the caller's access token. */
+export async function api<T>(
+  method: 'GET' | 'POST' | 'DELETE',
+  path: string,
+  accessToken: string,
+  body?: unknown,
+): Promise<T> {
   const res = await fetch(`/api${path}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(body !== undefined && { 'Content-Type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`GET /api${path} failed with ${res.status}`);
+    throw await toApiError(res);
   }
   return (await res.json()) as T;
 }

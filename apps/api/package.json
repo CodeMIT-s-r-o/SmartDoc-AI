@@ -11,9 +11,13 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:custom": "drizzle-kit generate --custom",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "test:db": "vitest run --config vitest.db.config.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1141.0",
+    "@aws-sdk/s3-presigned-post": "^3.1141.0",
+    "@aws-sdk/s3-request-presigner": "^3.1141.0",
     "@nestjs/common": "^12.1.0",
     "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^12.1.0",

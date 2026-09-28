@@ -75,9 +75,12 @@ describe('authentication', () => {
       ],
       ['an expired token', () => accessToken({ iat: now() - 7200, exp: now() - 3600 })],
     ])('%s', async (_, token) => {
-      const res = await get(token()).expect(401);
-      // Generic message only: which check failed is never disclosed.
-      expect(['Missing bearer token', 'Invalid access token']).toContain(res.body.message);
+      const res = await get(token())
+        .expect(401)
+        .expect('Content-Type', /application\/problem\+json/);
+      expect(res.body).toMatchObject({ status: 401, code: 'UNAUTHORIZED' });
+      // Generic detail only: which check failed is never disclosed.
+      expect(['Missing bearer token', 'Invalid access token']).toContain(res.body.detail);
     });
   });
 
@@ -159,6 +162,7 @@ describe('rate limiting', () => {
       .set('Authorization', `Bearer ${accessToken({ sub: heavy })}`)
       .expect(429);
     expect(blocked.headers['retry-after']).toBeDefined();
+    expect(blocked.body.code).toBe('RATE_LIMITED');
 
     await request(server)
       .get('/api/me')

@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthGuard } from './auth/auth.guard.js';
 import { AuthModule } from './auth/auth.module.js';
 import { TenantThrottlerGuard } from './auth/tenant-throttler.guard.js';
+import { ProblemJsonFilter } from './common/problem-json.filter.js';
 import { type Env, validateEnv } from './config/env.js';
 import { DbModule } from './db/db.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
 import { HealthModule } from './health/health.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -23,9 +25,11 @@ import { UsersModule } from './users/users.module.js';
     DbModule,
     AuthModule,
     UsersModule,
+    DocumentsModule,
     HealthModule,
   ],
   providers: [
+    { provide: APP_FILTER, useClass: ProblemJsonFilter },
     // Order matters: authenticate first, so the throttler can track by user.
     { provide: APP_GUARD, useExisting: AuthGuard },
     { provide: APP_GUARD, useExisting: TenantThrottlerGuard },

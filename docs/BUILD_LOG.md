@@ -12,6 +12,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.2 CDK dev Storage + Auth, invite | 1.5 h | 0.5 h | done (sign-in verified in 1.4) | see 2026-09-27 |
 | 1.3 Drizzle schema, custom SQL, migrate | 2 h | 0.2 h | done | see 2026-09-27 (Block 1.3) |
 | 1.4 Auth end to end | 2 h | 0.4 h | done | see 2026-09-28 |
+| 1.5 Upload: presigned POST, /complete, internal URL, documents UI | 1.5 h | 0.6 h | done | see 2026-09-28 (Block 1.5) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -119,3 +120,37 @@ in a global guard, creates the `users` row on first sight (email from `/oauth2/u
   `/logout` wants `client_id` + `logout_uri` rather than the OIDC `post_logout_redirect_uri`.
 - **Deferred:** RFC 9457 problem+json errors (Nest's default JSON error shape for now), an OpenAPI
   document, and the named per-route limits (30 chats/min, 10 uploads/h) until those routes exist.
+
+## 2026-09-28: Block 1.5 (uploads)
+
+**Result:** the browser reserves a document (`POST /api/documents`), uploads straight to S3 with
+a presigned POST, and calls `/complete`. That call checks what actually landed (size, content type,
+`%PDF-` magic bytes on that exact version), then pins the version and enqueues the ingestion job
+in one transaction. The worker gets a version-pinned download URL from
+`POST /internal/documents/:id/download-url` (internal token, outside `/api`). The UI lists
+documents and polls with a 2 s → 5 s → 10 s backoff while anything is queued or processing.
+Every API error is now RFC 9457 `application/problem+json` with a machine `code`.
+
+**Verified live against the dev bucket:**
+
+| Case | Result |
+|---|---|
+| Real PDF | S3 204, `/complete` 202 `queued`, 1 job, version pinned |
+| `.txt` renamed to `.pdf` | S3 accepts, `/complete` **422 INVALID_FILE**, version deleted (0 versions, 0 delete markers) |
+| 21 MB file declared as 1 KB | **S3 400 EntityTooLarge** (the policy, not the API, enforces it) |
+| 21 MB declared honestly | API **422 FILE_TOO_LARGE**, no policy issued |
+| Tampered `Content-Type` field | S3 **403 AccessDenied** |
+| Tampered key (another tenant's prefix) | S3 **403 AccessDenied** |
+| Internal route | URL pinned to the version, bytes start with `%PDF-1.4`; 401 without the token; 404 for a failed document and through the web proxy |
+| Polling | gaps of 2.1 s, 5.0 s, 10.1 s while a document is queued |
+
+**Tests:** 39 API e2e tests (upload, validation, quota, 10 uploads/h, complete, tenant isolation
+on every route, the internal route), 2 unit tests that decode the real S3 POST policy and the
+presigned GET, 5 repository tests against Postgres (`make test-db`), 2 web tests.
+
+**Bug found and fixed:** the first polling version advanced its backoff on every evaluation of
+`refetchInterval` (which TanStack Query runs on renders too), so it would jump straight to 10 s.
+The step is now derived from `dataUpdateCount`. (Also by design: no polling in hidden tabs.)
+
+**Deferred:** `DELETE /api/documents/:id` and `/retry` (need the worker's failure codes and the
+full delete cascade), the W2 SHA-256 dedup, and a reconciler for abandoned `uploading` rows.
