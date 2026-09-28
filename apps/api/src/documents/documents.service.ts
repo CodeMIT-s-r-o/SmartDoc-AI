@@ -1,10 +1,11 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
 import { ProblemException } from '../common/problem.js';
 import {
   DocumentStorage,
   documentKey,
+  documentPrefix,
   MAX_UPLOAD_BYTES,
   PDF_CONTENT_TYPE,
   type SignedUrl,
@@ -31,6 +32,8 @@ const titleFromFilename = (filename: string): string =>
 
 @Injectable()
 export class DocumentsService {
+  private readonly logger = new Logger(DocumentsService.name);
+
   constructor(
     private readonly repo: DocumentsRepository,
     private readonly storage: DocumentStorage,
@@ -54,6 +57,8 @@ export class DocumentsService {
 
     const id = randomUUID();
     const s3Key = documentKey(auth.tenantId, id);
+    // Presign first: if it fails (e.g. expired credentials) no orphan reservation is left behind.
+    const upload = await this.storage.createUploadPost(s3Key);
     const row = await this.repo.insertUploading({
       id,
       tenantId: auth.tenantId,
@@ -62,7 +67,7 @@ export class DocumentsService {
       s3Key,
       sizeBytes: body.sizeBytes,
     });
-    return { document: toDocumentDto(row), upload: await this.storage.createUploadPost(s3Key) };
+    return { document: toDocumentDto(row), upload };
   }
 
   /**
@@ -128,6 +133,28 @@ export class DocumentsService {
       throw new ProblemException(HttpStatus.CONFLICT, 'INVALID_STATE', `Document is ${doc.status}`);
     }
     return this.storage.presignGet(doc.s3Key, doc.s3VersionId, `${doc.title}.pdf`);
+  }
+
+  /**
+   * Deletes a document in any state (uploading, queued, processing, ready, failed): out of scope
+   * first, then the database rows, then every S3 version. If S3 fails after the rows are gone,
+   * the objects are orphans under a known prefix: logged for the reconciler, not an error for
+   * the user, whose document is already gone everywhere it could be read from.
+   */
+  async remove(auth: AuthContext, id: string): Promise<void> {
+    const doc = await this.repo.markDeleting(auth.tenantId, id);
+    if (!doc) {
+      throw notFound();
+    }
+    await this.repo.purge(auth.tenantId, id);
+    const prefix = documentPrefix(auth.tenantId, id);
+    try {
+      await this.storage.deleteAllVersions(prefix);
+    } catch (error) {
+      this.logger.warn(
+        `S3 cleanup failed for ${prefix}, left for the reconciler: ${String(error)}`,
+      );
+    }
   }
 
   /** For the ingestion worker, which has no AWS credentials of its own. */

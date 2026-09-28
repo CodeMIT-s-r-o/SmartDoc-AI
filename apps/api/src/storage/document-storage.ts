@@ -1,7 +1,10 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectVersionsCommand,
+  type ObjectIdentifier,
   S3Client,
   S3ServiceException,
 } from '@aws-sdk/client-s3';
@@ -38,8 +41,11 @@ export interface SignedUrl {
 }
 
 /** Every tenant object lives under this prefix; the IAM policy grants nothing outside it. */
+export const documentPrefix = (tenantId: string, documentId: string): string =>
+  `users/${tenantId}/documents/${documentId}/`;
+
 export const documentKey = (tenantId: string, documentId: string): string =>
-  `users/${tenantId}/documents/${documentId}/original.pdf`;
+  `${documentPrefix(tenantId, documentId)}original.pdf`;
 
 const expiresAt = (ttlSeconds: number): string =>
   new Date(Date.now() + ttlSeconds * 1000).toISOString();
@@ -127,6 +133,44 @@ export class DocumentStorage {
     await this.s3.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key, VersionId: versionId }),
     );
+  }
+
+  /**
+   * Removes every version and delete marker under a document's prefix, so no bytes survive in
+   * the versioned bucket. Returns how many were deleted.
+   */
+  async deleteAllVersions(prefix: string): Promise<number> {
+    let deleted = 0;
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    do {
+      const page = await this.s3.send(
+        new ListObjectVersionsCommand({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          KeyMarker: keyMarker,
+          VersionIdMarker: versionIdMarker,
+        }),
+      );
+      const objects: ObjectIdentifier[] = [...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])]
+        .filter((v) => v.Key)
+        .map((v) => ({ Key: v.Key!, VersionId: v.VersionId }));
+      if (objects.length > 0) {
+        const res = await this.s3.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: objects, Quiet: true },
+          }),
+        );
+        if (res.Errors?.length) {
+          throw new Error(`S3 could not delete ${res.Errors.length} object versions`);
+        }
+        deleted += objects.length;
+      }
+      keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+      versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+    } while (keyMarker);
+    return deleted;
   }
 
   /** A short-lived GET pinned to a version; `inlineFilename` makes browsers display the PDF. */

@@ -87,6 +87,25 @@ export class FakeDocumentsRepository implements Pick<
     return Promise.resolve(row);
   }
 
+  markDeleting(tenantId: string, id: string): Promise<DocumentRow | undefined> {
+    const row = this.rows.get(id);
+    if (row?.tenantId !== tenantId || row.status === 'deleting') {
+      return Promise.resolve(undefined);
+    }
+    row.status = 'deleting';
+    return Promise.resolve(row);
+  }
+
+  purge(tenantId: string, id: string): Promise<void> {
+    if (this.rows.get(id)?.tenantId === tenantId) {
+      this.rows.delete(id);
+      for (let i = this.jobs.indexOf(id); i >= 0; i = this.jobs.indexOf(id)) {
+        this.jobs.splice(i, 1);
+      }
+    }
+    return Promise.resolve();
+  }
+
   findForIngestion(id: string): Promise<DocumentRow | undefined> {
     const row = this.rows.get(id);
     const ingesting = row && ['queued', 'processing'].includes(row.status) && row.s3VersionId;
@@ -98,6 +117,9 @@ export class FakeDocumentsRepository implements Pick<
 export class FakeDocumentStorage implements Pick<DocumentStorage, keyof DocumentStorage> {
   readonly objects = new Map<string, { bytes: Buffer; contentType: string; versionId: string }>();
   readonly deletedVersions: string[] = [];
+  readonly deletedPrefixes: string[] = [];
+  failNextPrefixDelete = false;
+  failNextUploadPost = false;
   private versions = 0;
 
   /** Simulates the browser's POST to S3. */
@@ -108,6 +130,10 @@ export class FakeDocumentStorage implements Pick<DocumentStorage, keyof Document
   }
 
   createUploadPost(key: string): Promise<UploadPost> {
+    if (this.failNextUploadPost) {
+      this.failNextUploadPost = false;
+      return Promise.reject(new Error('presign failed'));
+    }
     return Promise.resolve({
       url: 'https://docs-bucket.s3.test/',
       fields: { key, 'Content-Type': PDF_CONTENT_TYPE },
@@ -139,6 +165,17 @@ export class FakeDocumentStorage implements Pick<DocumentStorage, keyof Document
     }
     this.deletedVersions.push(`${key}@${versionId}`);
     return Promise.resolve();
+  }
+
+  deleteAllVersions(prefix: string): Promise<number> {
+    if (this.failNextPrefixDelete) {
+      this.failNextPrefixDelete = false;
+      return Promise.reject(new Error('S3 unavailable'));
+    }
+    const keys = [...this.objects.keys()].filter((key) => key.startsWith(prefix));
+    keys.forEach((key) => this.objects.delete(key));
+    this.deletedPrefixes.push(prefix);
+    return Promise.resolve(keys.length);
   }
 
   presignGet(key: string, versionId: string, inlineFilename?: string): Promise<SignedUrl> {

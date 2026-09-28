@@ -1,73 +1,58 @@
-import { useEffect, useState } from 'react';
+import { Box, CircularProgress, Container } from '@mui/material';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
 import { api, type Me } from './api';
 import { useSignOut } from './auth/useSignOut';
+import { ChatPlaceholder } from './chat/ChatPlaceholder';
+import { AppHeader } from './components/AppHeader';
+import { SignInScreen } from './components/SignInScreen';
 import { DocumentsPanel } from './documents/DocumentsPanel';
+import { useDocuments } from './documents/useDocuments';
 
-type MeState =
-  { kind: 'loading' } | { kind: 'loaded'; me: Me } | { kind: 'failed'; message: string };
-
-const page = { fontFamily: 'system-ui, sans-serif', maxWidth: 640, margin: '4rem auto' } as const;
-
-/** App shell: sign in, the caller's profile from /api/me, documents, sign out. */
 export function App() {
   const auth = useAuth();
 
   if (auth.isLoading) {
-    return <main style={page}>Loading…</main>;
-  }
-  if (auth.error) {
     return (
-      <main style={page}>
-        <h1>SmartDoc AI</h1>
-        <p>Sign-in failed: {auth.error.message}</p>
-        <button onClick={() => void auth.signinRedirect()}>Try again</button>
-      </main>
+      <Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        <CircularProgress aria-label="Loading" />
+      </Box>
     );
   }
   if (!auth.isAuthenticated || !auth.user) {
-    return (
-      <main style={page}>
-        <h1>SmartDoc AI</h1>
-        <p>Production-grade RAG with measured cost controls. Access is by invitation.</p>
-        <button onClick={() => void auth.signinRedirect()}>Sign in</button>
-      </main>
-    );
+    return <SignInScreen error={auth.error?.message} onSignIn={() => void auth.signinRedirect()} />;
   }
   return <SignedIn accessToken={auth.user.access_token} />;
 }
 
 function SignedIn({ accessToken }: { accessToken: string }) {
   const signOut = useSignOut();
-  const [state, setState] = useState<MeState>({ kind: 'loading' });
-
-  useEffect(() => {
-    let active = true;
-    api<Me>('GET', '/me', accessToken)
-      .then((me) => active && setState({ kind: 'loaded', me }))
-      .catch((error: unknown) => active && setState({ kind: 'failed', message: String(error) }));
-    return () => {
-      active = false;
-    };
-  }, [accessToken]);
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api<Me>('GET', '/me', accessToken),
+    refetchInterval: 60_000,
+  });
+  const documents = useDocuments(accessToken);
+  const ready = documents.data?.filter((d) => d.status === 'ready').length ?? 0;
 
   return (
-    <main style={page}>
-      <h1>SmartDoc AI</h1>
-      {state.kind === 'loading' && <p>Loading profile…</p>}
-      {state.kind === 'failed' && <p>Could not load your profile: {state.message}</p>}
-      {state.kind === 'loaded' && (
-        <ul>
-          <li>Signed in as {state.me.email}</li>
-          <li>Role: {state.me.isAdmin ? 'admin' : 'member'}</li>
-          <li>
-            Spent today: ${state.me.spentTodayUsd.toFixed(4)} of $
-            {state.me.dailyLimitUsd.toFixed(2)}
-          </li>
-        </ul>
-      )}
-      <button onClick={() => void signOut()}>Sign out</button>
-      <DocumentsPanel accessToken={accessToken} />
-    </main>
+    <>
+      <AppHeader me={me.data} onSignOut={() => void signOut()} />
+      <Container maxWidth="lg" sx={{ py: 3 }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 3,
+            gridTemplateColumns: { xs: '1fr', md: '5fr 7fr' },
+            alignItems: 'start',
+          }}
+        >
+          <DocumentsPanel accessToken={accessToken} documents={documents} />
+          <Box sx={{ minHeight: { md: 480 }, height: '100%' }}>
+            <ChatPlaceholder readyDocuments={ready} />
+          </Box>
+        </Box>
+      </Container>
+    </>
   );
 }

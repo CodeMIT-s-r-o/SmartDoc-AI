@@ -14,6 +14,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.4 Auth end to end | 2 h | 0.4 h | done | see 2026-09-28 |
 | 1.5 Upload: presigned POST, /complete, internal URL, documents UI | 1.5 h | 0.6 h | done | see 2026-09-28 (Block 1.5) |
 | 1.6 Ingestion worker | 4 h | 1.0 h | done | see 2026-09-28 (Block 0.2 + 1.6) |
+| (extra) UI on Material UI + document delete | – | 0.6 h | done | see 2026-09-28 (UI + delete); pulls part of 1.9 forward |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -218,3 +219,68 @@ dev worker never claims test jobs.
 
 **Deviations from the plan:** the document title stays the user's filename (a PDF's `/Title`
 metadata is often "Microsoft Word - doc1.docx"); chunk-hash embedding reuse is still W2.
+
+## 2026-09-28: UI on Material UI, document delete
+
+**Why now:** the placeholder UI was not presentable, and documents could not be removed.
+
+**UI:** Material UI 9 (Material Design, open source, accessible components), Roboto,
+light and dark schemes that follow the OS. App bar with today's spend against the daily limit
+and an account menu; sign-in card; documents card with drag and drop, multi-file upload with
+per-file progress (XHR, since fetch reports no upload progress), status chips with
+plain-language failure reasons (e.g. "No selectable text. Scanned PDFs are not supported yet."),
+Open and Delete actions, confirmation dialog, snackbars; a chat panel placeholder so the page
+already has its final layout.
+
+**Delete (`DELETE /api/documents/:id`, 204), in every state including uploading and processing:**
+1. Compare-and-set to `deleting`: the document leaves scope at once, and a running ingestion's
+   finalize (which requires `processing`) rolls back.
+2. One transaction: strip this document's snippets from past answers' citations (title and
+   pages stay), then delete the row; chunks and jobs cascade. The ledger and retrieval telemetry
+   have no FK and survive.
+3. Delete every S3 version and delete marker under the document's prefix. If that fails the user
+   still gets 204 (the document is gone everywhere it can be read from) and the prefix is logged
+   for the reconciler.
+
+The UI removes the row optimistically and restores it if the call fails.
+
+**Tests:** 5 new API e2e tests (queued and uploading deletes, the worker can no longer fetch it,
+404 on repeat, S3 failure), a cross-tenant delete added to the isolation test, 2 Postgres tests
+(cascade, citation redaction, ledger kept, other tenant cannot mark deleting), 3 component tests
+(Testing Library: details and status, failure reason, Delete offered in every state).
+
+**Incident:** at 22:53 something ran `npm i` in the repo root (not a command from this session).
+npm created `package-lock.json` and rewrote `yarn.lock` in the Yarn v1 format, breaking Yarn 4.
+Restored the lockfile from git and reinstalled. Guard added: `engines.npm` plus
+`engine-strict=true` in `.npmrc`, so `npm install` now fails fast with EBADENGINE.
+
+**MUI 9 note:** system props on layout components (`<Stack alignItems="center">`) were removed;
+everything goes through `sx`.
+
+**Found during the live review, fixed:**
+- **The API crashed when Postgres restarted** (22:59: `57P01 terminating connection due to
+  administrator command`). node-postgres emits 'error' on the pool for a dead idle connection,
+  and without a listener that kills the process. The pool now logs it and reconnects (unit test).
+- **Three of the user's uploads stuck in `uploading`**, with no object in S3: the api container
+  still had `make creds` credentials that had expired at 20:43Z (`docker compose restart` does not
+  re-read `env_file`), so S3 rejected the POSTs. Such reservations now show as "Interrupted" after
+  10 minutes (the presigned POST expires after 5), with the advice to delete and upload again.
+- **An orphan reservation when presigning failed:** `create` inserted the row before presigning.
+  It now presigns first (regression test).
+- `apps/web/public` was not mounted into the dev container, so Vite answered with `index.html`;
+  `/complete` correctly rejected that as "not a PDF".
+
+**Verified live (the new UI code, in the signed-in browser):** XHR upload with progress (and its
+CORS preflight) 305 ms; `queued -> processing -> ready` (14 pages, 40 chunks, $0.00018); delete:
+0 S3 versions and 0 delete markers left, no rows left, the ledger row kept. The user uploaded and
+ingested their own document through the UI. Screens checked in light and dark, at 1280 px and on
+a 375 px phone.
+
+**Dev credentials now last 12 hours** (was 1): `SmartDocDevApp` `MaxSessionDuration` 43,200 s
+(deployed), `duration_seconds = 43200` in the `smartdoc-dev-app` profile, and `make creds`
+recreates the api container itself. Every failed upload of the day traced back to an expired
+1-hour session. The role still reaches only `users/*` in the dev bucket. (Deviation from plan §3.3.)
+
+**Known gap:** a presigned POST stays valid for 5 minutes, so a client could still upload to the
+key of a document it just deleted. The object would be an orphan with no database row (no
+ingestion, no access); the W2 reconciler removes such prefixes.

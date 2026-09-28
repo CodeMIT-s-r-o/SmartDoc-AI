@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { AuthContext } from '../auth/auth-context.js';
 import { CurrentAuth } from '../auth/current-auth.decorator.js';
@@ -49,6 +49,16 @@ export class DocumentsController {
     @Param('id', uuidParam('Document')) id: string,
   ): Promise<DocumentDto> {
     return this.documents.get(auth, id);
+  }
+
+  /** Works in every state, including while uploading or ingesting. */
+  @Delete(':id')
+  @HttpCode(204)
+  remove(
+    @CurrentAuth() auth: AuthContext,
+    @Param('id', uuidParam('Document')) id: string,
+  ): Promise<void> {
+    return this.documents.remove(auth, id);
   }
 
   @Get(':id/file')

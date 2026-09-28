@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { documentKey, MAX_UPLOAD_BYTES } from '../src/storage/document-storage.js';
+import { documentKey, documentPrefix, MAX_UPLOAD_BYTES } from '../src/storage/document-storage.js';
 import { createTestApp, type TestApp } from './support/test-app.js';
 import { accessToken } from './support/tokens.js';
 
@@ -25,6 +25,7 @@ describe('documents', () => {
       list: () => as(server().get('/api/documents')),
       get: (id: string) => as(server().get(`/api/documents/${id}`)),
       file: (id: string) => as(server().get(`/api/documents/${id}/file`)),
+      remove: (id: string) => as(server().delete(`/api/documents/${id}`)),
     };
   };
 
@@ -100,6 +101,15 @@ describe('documents', () => {
       expect(res.body.code).toBe('QUOTA_EXCEEDED');
     });
 
+    it('leaves no reservation behind when presigning fails', async () => {
+      const u = user();
+      t.storage.failNextUploadPost = true;
+
+      await u.create().expect(500);
+
+      expect((await u.list().expect(200)).body).toEqual([]);
+    });
+
     it('limits upload reservations to 10 per hour per user', async () => {
       const u = user();
       for (let i = 0; i < 10; i++) {
@@ -168,13 +178,72 @@ describe('documents', () => {
     });
   });
 
+  describe('DELETE /api/documents/:id', () => {
+    it('deletes a queued document: rows, job and every S3 version', async () => {
+      const u = user();
+      const id = await uploaded(u, PDF);
+      await u.complete(id).expect(202);
+
+      await u.remove(id).expect(204);
+
+      expect((await u.get(id).expect(404)).body.code).toBe('NOT_FOUND');
+      expect((await u.list().expect(200)).body).toEqual([]);
+      expect(t.documents.jobs).not.toContain(id);
+      expect(t.storage.objects.has(documentKey(u.sub, id))).toBe(false);
+      expect(t.storage.deletedPrefixes).toContain(documentPrefix(u.sub, id));
+    });
+
+    it('deletes a document that is still uploading', async () => {
+      const u = user();
+      const id = (await u.create().expect(201)).body.document.id as string;
+
+      await u.remove(id).expect(204);
+
+      expect(t.documents.rows.has(id)).toBe(false);
+    });
+
+    it('stops the worker from fetching a deleted document', async () => {
+      const u = user();
+      const id = await uploaded(u, PDF);
+      await u.complete(id).expect(202);
+      await u.remove(id).expect(204);
+
+      await request(t.app.getHttpServer())
+        .post(`/internal/documents/${id}/download-url`)
+        .set('X-Internal-Token', INTERNAL_TOKEN)
+        .expect(404);
+    });
+
+    it('is 404 the second time', async () => {
+      const u = user();
+      const id = await uploaded(u, PDF);
+      await u.remove(id).expect(204);
+      expect((await u.remove(id).expect(404)).body.code).toBe('NOT_FOUND');
+    });
+
+    it('still succeeds for the user when S3 cleanup fails (left for the reconciler)', async () => {
+      const u = user();
+      const id = await uploaded(u, PDF);
+      t.storage.failNextPrefixDelete = true;
+
+      await u.remove(id).expect(204);
+
+      expect(t.documents.rows.has(id)).toBe(false);
+    });
+  });
+
   describe('tenant isolation', () => {
     it('hides another user’s document behind 404 on every route', async () => {
       const owner = user();
       const other = user();
       const id = await uploaded(owner, PDF);
 
-      for (const res of [await other.get(id), await other.complete(id), await other.file(id)]) {
+      for (const res of [
+        await other.get(id),
+        await other.complete(id),
+        await other.file(id),
+        await other.remove(id),
+      ]) {
         expect(res.status).toBe(404);
         expect(res.body.code).toBe('NOT_FOUND');
       }

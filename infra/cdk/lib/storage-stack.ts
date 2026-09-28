@@ -65,7 +65,9 @@ export class StorageStack extends Stack {
         assumedBy: props.devAppTrustedPrincipalArn
           ? new iam.ArnPrincipal(props.devAppTrustedPrincipalArn)
           : new iam.AccountRootPrincipal(),
-        maxSessionDuration: Duration.hours(1),
+        // A working day: the role reaches only users/* in the dev bucket, and hourly `make creds`
+        // expiries kept breaking local uploads.
+        maxSessionDuration: Duration.hours(12),
       });
       grantDocumentAccess(this.docsBucket, this.devAppRole);
       new CfnOutput(this, 'DevAppRoleArn', { value: this.devAppRole.roleArn });

@@ -63,7 +63,7 @@ describe('storage', () => {
     const t = template('SmartDoc-Dev-Storage');
     t.hasResourceProperties('AWS::IAM::Role', {
       RoleName: 'SmartDocDevApp',
-      MaxSessionDuration: 3600,
+      MaxSessionDuration: 43200,
     });
     const policies = t.findResources('AWS::IAM::Policy');
     const statements = Object.values(policies).flatMap(

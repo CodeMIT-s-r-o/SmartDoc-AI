@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, count, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module.js';
-import { documents, ingestionJobs } from '../db/schema.js';
+import { documents, ingestionJobs, messages } from '../db/schema.js';
 
 export type DocumentRow = typeof documents.$inferSelect;
 
@@ -100,6 +100,51 @@ export class DocumentsRepository {
       }
       await tx.insert(ingestionJobs).values({ documentId: id });
       return row;
+    });
+  }
+
+  /**
+   * Step 1 of a delete: flip the document to `deleting` so it leaves chat scope and the worker's
+   * finalize (which requires `processing`) rolls back. Returns the row, or undefined if the caller
+   * does not own it or it is already being deleted.
+   */
+  async markDeleting(tenantId: string, id: string): Promise<DocumentRow | undefined> {
+    const [row] = await this.db
+      .update(documents)
+      .set({ status: 'deleting' })
+      .where(
+        and(
+          eq(documents.id, id),
+          eq(documents.tenantId, tenantId),
+          ne(documents.status, 'deleting'),
+        ),
+      )
+      .returning();
+    return row;
+  }
+
+  /**
+   * Step 2, one transaction: strip this document's snippets from past answers' citations (title
+   * and pages stay, so old answers still say where they came from), then delete the row. Chunks and
+   * jobs cascade; the cost ledger and retrieval telemetry have no FK and survive by design.
+   */
+  async purge(tenantId: string, id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(messages)
+        .set({
+          citations: sql`(
+            SELECT jsonb_agg(CASE WHEN e->>'documentId' = ${id} THEN e - 'snippet' ELSE e END)
+              FROM jsonb_array_elements(${messages.citations}) AS e
+          )`,
+        })
+        .where(
+          and(
+            eq(messages.tenantId, tenantId),
+            sql`${messages.citations} @> jsonb_build_array(jsonb_build_object('documentId', ${id}::text))`,
+          ),
+        );
+      await tx.delete(documents).where(and(eq(documents.id, id), eq(documents.tenantId, tenantId)));
     });
   }
 

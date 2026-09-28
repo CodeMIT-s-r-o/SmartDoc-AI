@@ -140,6 +140,7 @@ services:
       - '127.0.0.1:5173:5173'
     volumes:
       - ./apps/web/src:/app/apps/web/src
+      - ./apps/web/public:/app/apps/web/public
       - ./apps/web/index.html:/app/apps/web/index.html
     depends_on:
       api:

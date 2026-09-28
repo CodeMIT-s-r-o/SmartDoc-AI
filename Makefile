@@ -75,9 +75,10 @@ cdk-dev: ## Deploy the dev stacks (docs bucket, SmartDocDevApp role, Cognito), r
 dev-config: ## Write .env.dev-aws (non-secret dev config) from SSM
 	AWS_PROFILE=$(AWS_ADMIN_PROFILE) scripts/dev-config.sh
 
-creds: ## Export 1-hour SmartDocDevApp credentials for the api container into .env.aws
+creds: ## Export 12-hour SmartDocDevApp credentials for the api container, then recreate api
 	(umask 077 && aws configure export-credentials --profile $(DEV_APP_PROFILE) --format env-no-export > .env.aws)
-	@echo "Wrote .env.aws (valid for 1 hour). Apply with: docker compose up -d api"
+	@echo "Wrote .env.aws (valid for 12 hours)."
+	@if $(COMPOSE) ps --status running --services 2>/dev/null | grep -qx api; then $(COMPOSE) up -d api; fi
 
 invite: ## Invite a user to the dev pool: make invite EMAIL=you@example.com [ADMIN=1]
 	AWS_PROFILE=$(AWS_ADMIN_PROFILE) scripts/invite-user.sh $(EMAIL) $(if $(ADMIN),--admin)

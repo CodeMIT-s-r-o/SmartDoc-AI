@@ -24,7 +24,7 @@ stacks once and wires them into the local compose stack.
    role_arn = arn:aws:iam::<account-id>:role/SmartDocDevApp
    source_profile = codemit
    region = eu-central-1
-   duration_seconds = 3600
+   duration_seconds = 43200
    ```
 4. Invite yourself (Cognito emails a temporary password):
    ```bash
@@ -34,7 +34,7 @@ stacks once and wires them into the local compose stack.
 ## Every session
 
 ```bash
-make creds   # 1-hour credentials for the api container; rerun when they expire
+make creds   # 12-hour credentials for the api container (recreates it if running)
 make up
 ```
 

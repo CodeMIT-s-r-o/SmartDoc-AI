@@ -8,7 +8,8 @@
 !.env.example
 secrets/
 
-# Node / Yarn
+# Node / Yarn (npm is not used here)
+package-lock.json
 node_modules/
 dist/
 coverage/
