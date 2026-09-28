@@ -2,7 +2,7 @@
 
 Runs against a migrated database as the application role (the role the services use):
     make test-db
-Skipped when CONTRACT_DATABASE_URL is not set, so the default `make test` needs no database.
+Skipped when TEST_DATABASE_URL is not set, so the default `make test` needs no database.
 Every test runs in a transaction that is rolled back.
 """
 
@@ -14,9 +14,9 @@ from decimal import Decimal
 import psycopg
 import pytest
 
-DATABASE_URL = os.environ.get("CONTRACT_DATABASE_URL")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
-pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="CONTRACT_DATABASE_URL is not set")
+pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL is not set")
 
 # Columns (name -> formatted type) the Python services read or write. Extra columns are fine.
 EXPECTED_COLUMNS: dict[str, dict[str, str]] = {

@@ -7,8 +7,9 @@ import {
 } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ProblemException } from '../common/problem.js';
 import type { Env } from '../config/env.js';
 
 /** Optional override (tests); by default the client uses the region and the default credential chain. */
@@ -62,6 +63,7 @@ export class DocumentStorage {
    * the exact key and the content type, and expires after 5 minutes.
    */
   async createUploadPost(key: string): Promise<UploadPost> {
+    this.assertCredentialsFresh();
     const { url, fields } = await createPresignedPost(this.s3, {
       Bucket: this.bucket,
       Key: key,
@@ -73,6 +75,22 @@ export class DocumentStorage {
       Expires: UPLOAD_TTL_S,
     });
     return { url, fields, expiresAt: expiresAt(UPLOAD_TTL_S) };
+  }
+
+  /**
+   * Presigning is local, so expired credentials would silently produce URLs that S3 rejects.
+   * Locally, `make creds` sets AWS_CREDENTIAL_EXPIRATION; instance-role credentials in prod
+   * refresh themselves and never set it.
+   */
+  private assertCredentialsFresh(): void {
+    const expiration = process.env.AWS_CREDENTIAL_EXPIRATION;
+    if (expiration && Date.parse(expiration) <= Date.now()) {
+      throw new ProblemException(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        'UNAVAILABLE',
+        'AWS credentials expired: run `make creds` and restart the api container',
+      );
+    }
   }
 
   async head(key: string): Promise<ObjectHead | undefined> {
@@ -113,6 +131,7 @@ export class DocumentStorage {
 
   /** A short-lived GET pinned to a version; `inlineFilename` makes browsers display the PDF. */
   async presignGet(key: string, versionId: string, inlineFilename?: string): Promise<SignedUrl> {
+    this.assertCredentialsFresh();
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,

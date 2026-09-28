@@ -7,6 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken \
     PATH="/opt/venv/bin:$PATH"
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
@@ -14,6 +15,8 @@ WORKDIR /app
 FROM base AS dev
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-install-project
+# Bake the tokenizer into the image: no download at runtime, one BPE file for chunking and counting.
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 COPY . .
 USER app
 EXPOSE 8000

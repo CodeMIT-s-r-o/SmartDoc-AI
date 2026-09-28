@@ -46,11 +46,12 @@ test: ## Run unit and e2e tests (no network, no API calls)
 	yarn test
 	cd services/ai && uv run pytest
 
-APP_DB_URL = postgresql://smartdoc_app:$${DB_APP_PASSWORD:-smartdoc_app_dev}@127.0.0.1:$${DB_PORT:-5432}/smartdoc
+# Tests use their own database, so the running dev worker never picks up test jobs.
+TEST_DB_URL = postgresql://smartdoc_app:$${DB_APP_PASSWORD:-smartdoc_app_dev}@127.0.0.1:$${DB_PORT:-5432}/smartdoc_test
 
-test-db: ## Database tests against the running local stack (as the app role): contract + repositories
-	cd services/ai && CONTRACT_DATABASE_URL=$(APP_DB_URL) uv run pytest tests/test_schema_contract.py -q
-	TEST_DATABASE_URL=$(APP_DB_URL) yarn workspace @smartdoc/api test:db
+test-db: ## Database tests against smartdoc_test in the running stack (as the app role)
+	cd services/ai && TEST_DATABASE_URL=$(TEST_DB_URL) uv run pytest tests/test_schema_contract.py tests/db -q
+	TEST_DATABASE_URL=$(TEST_DB_URL) yarn workspace @smartdoc/api test:db
 
 check: lint typecheck test ## Everything CI will run (without a database)
 

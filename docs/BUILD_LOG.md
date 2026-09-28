@@ -6,13 +6,14 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | Block | Planned | Actual | Status | Notes |
 |---|---|---|---|---|
 | 0.1 Accounts | 1 h | | pending | OpenAI projects with enforced limits, AWS flat-rate eligibility, Langfuse (W2), corpus PDFs |
-| 0.2 OpenAI spike | 1 h | | script ready | `make spike` once `OPENAI_API_KEY` is in `.env`; record results below |
+| 0.2 OpenAI spike | 1 h | 0.1 h | done | see 2026-09-28 (Block 0.2 + 1.6) |
 | 0.3 Toolchain | 1 h | 0.3 h | done | NestJS 12 kept; see surprises |
 | 1.1 Compose, Dockerfiles, health | 2 h | 0.3 h | done | `make creds` done in 1.2 |
 | 1.2 CDK dev Storage + Auth, invite | 1.5 h | 0.5 h | done (sign-in verified in 1.4) | see 2026-09-27 |
 | 1.3 Drizzle schema, custom SQL, migrate | 2 h | 0.2 h | done | see 2026-09-27 (Block 1.3) |
 | 1.4 Auth end to end | 2 h | 0.4 h | done | see 2026-09-28 |
 | 1.5 Upload: presigned POST, /complete, internal URL, documents UI | 1.5 h | 0.6 h | done | see 2026-09-28 (Block 1.5) |
+| 1.6 Ingestion worker | 4 h | 1.0 h | done | see 2026-09-28 (Block 0.2 + 1.6) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -154,3 +155,66 @@ The step is now derived from `dataUpdateCount`. (Also by design: no polling in h
 
 **Deferred:** `DELETE /api/documents/:id` and `/retry` (need the worker's failure codes and the
 full delete cascade), the W2 SHA-256 dedup, and a reconciler for abandoned `uploading` rows.
+
+## 2026-09-28: Block 0.2 (OpenAI spike) and Block 1.6 (ingestion worker)
+
+**Spike results** (`make spike`, gpt-6-luna, Responses API, `effort: none`):
+
+| Check | Result |
+|---|---|
+| Explicit prompt cache, fresh prefix | call 1: `cache_write_tokens=1291`, `cached_tokens=0`; call 2: `cached_tokens=1291`. Only the static prefix up to the breakpoint is written; the question is not |
+| Streaming | TTFT 0.8 to 1.7 s; `response.completed` carries full usage; `reasoning_tokens=0` at effort none |
+| `temperature` at effort none | accepted |
+| Embeddings | text-embedding-3-small, 1,536 dimensions |
+| Flex (`service_tier: "flex"`) | works for gpt-6-luna |
+
+The very first spike run already showed `cached_tokens=1264` with no write: the prefix was still
+warm from an earlier run, a reminder that the replay must control cache state explicitly.
+
+**Worker result:** polls the Postgres queue every 2 s, claims with `FOR UPDATE SKIP LOCKED`
+(attempts counted at claim, lease token as a fencing token, 15-minute lease), downloads the pinned
+version through the API, parses in a spawned child with RLIMIT_AS 320 MB / RLIMIT_CPU 60 s / 90 s
+wall clock, chunks per section (500 tokens, 75 overlap, cl100k), embeds with a
+"title > section" header in batches of 256, writes one ledger row per embeddings call, and
+finalizes in one fenced transaction (replace chunks, document `ready`).
+
+**Verified live** (dev stack, real OpenAI and S3):
+
+| Input | Result |
+|---|---|
+| Synthetic handbook, 102 pages | `ready` in ~6 s: 214 chunks over 50 sections, max 498 tokens, page ranges match, no header/footer text left, 73,416 embedding tokens = **$0.00146832** in one call |
+| "Scanned" PDF (no text layer) | `NO_TEXT_LAYER` on attempt 1, no retries |
+| Decompression bomb (120 MB of content) | `PARSE_LIMIT_EXCEEDED`, worker unaffected (140 MiB RSS) |
+| Re-ingesting the handbook | chunks replaced (not duplicated); a second ledger row kept |
+| Expired API credentials | 3 attempts with 60 s / 120 s backoff, then `failed`: the retry path works |
+
+HNSW returns a chunk's own vector first (cos 1.0); FTS finds "2 Annual leave > 2.3 Carry-over".
+
+**Tests:** 29 worker unit tests (parser incl. encryption, page/char limits, bombs, outline and
+numbered sections; sandbox limits; chunk offsets and page ranges; batching), passing on macOS and
+inside the Linux image (where RLIMIT_AS is enforced too); 10 queue tests against Postgres (SKIP
+LOCKED under concurrency, lease reclaim and fencing, retry, fail, fenced finalize, rollback when
+the document changes); 3 download tests.
+
+**Bugs found by the tests and fixed:**
+- **langchain's `add_start_index` is wrong with a token-based splitter:** it subtracts the overlap
+  as characters (75) while the overlap is 75 *tokens* (~300 characters), so `find()` misses and
+  offsets drift; page citations would have been wrong. Offsets are now located monotonically.
+- **pypdf's `extract_text()` swallows its own decompression-limit error** and returns "", which
+  disguised the bomb as NO_TEXT_LAYER. Content streams are decoded explicitly first.
+- The header/footer filter removed every line of 3-line pages; edge lines no longer overlap and
+  must be short.
+- Heading-only sections ("1 Working hours" directly followed by "1.1 ...") produced title-only
+  chunks; they are skipped (224 -> 214 chunks on the handbook).
+
+**Security fix:** a failed S3 download logged the full presigned URL (signature and session token)
+and stored it in `ingestion_jobs.last_error`. Download errors now carry only the status and S3
+error code ("S3 returned 400 ExpiredToken"); the stored rows were redacted.
+
+**Developer experience:** the API now refuses to presign with expired `make creds` credentials
+(503 "run make creds") instead of silently producing URLs S3 rejects. DB tests moved to their own
+database, `smartdoc_test` (created by `init-roles.sh`, migrated by the `migrate` service), so the
+dev worker never claims test jobs.
+
+**Deviations from the plan:** the document title stays the user's filename (a PDF's `/Title`
+metadata is often "Microsoft Word - doc1.docx"); chunk-hash embedding reuse is still W2.

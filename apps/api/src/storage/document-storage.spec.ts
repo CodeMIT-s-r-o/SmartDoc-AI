@@ -1,6 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import type { ConfigService } from '@nestjs/config';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../config/env.js';
 import { DocumentStorage, documentKey, MAX_UPLOAD_BYTES } from './document-storage.js';
 
@@ -56,5 +56,27 @@ describe('DocumentStorage.presignGet', () => {
       "inline; filename*=UTF-8''Smernica%20%C4%8D.%205%20%282026%29.pdf",
     );
     expect(Number(params.get('X-Amz-Expires'))).toBe(300);
+  });
+});
+
+describe('expired local credentials', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses to presign with credentials that have already expired', async () => {
+    vi.stubEnv('AWS_CREDENTIAL_EXPIRATION', new Date(Date.now() - 1000).toISOString());
+
+    await expect(storage.presignGet('users/t/k', 'v1')).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+    });
+    await expect(storage.createUploadPost('users/t/k')).rejects.toMatchObject({
+      code: 'UNAVAILABLE',
+    });
+  });
+
+  it('presigns while they are still valid', async () => {
+    vi.stubEnv('AWS_CREDENTIAL_EXPIRATION', new Date(Date.now() + 60_000).toISOString());
+    await expect(storage.presignGet('users/t/k', 'v1')).resolves.toHaveProperty('url');
   });
 });

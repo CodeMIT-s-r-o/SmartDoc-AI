@@ -5,9 +5,14 @@ description = "SmartDoc AI: ingestion worker and RAG service"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "fastapi[standard-no-fastapi-cloud-cli]>=0.141.1",
+    "httpx>=0.28.1",
+    "langchain-text-splitters>=1.1.2",
     "openai>=3.19.2",
+    "pgvector>=0.5.0",
     "psycopg[binary,pool]>=3.3.6",
     "pydantic-settings>=2.15.0",
+    "pypdf>=6.19.0",
+    "tiktoken>=0.14.0",
 ]
 
 [dependency-groups]
@@ -15,6 +20,7 @@ dev = [
     "httpx>=0.28.1",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
+    "reportlab>=5.0.1",
     "ruff>=0.16.9",
 ]
 

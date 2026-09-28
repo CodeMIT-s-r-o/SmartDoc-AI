@@ -35,7 +35,8 @@ services:
     pull_policy: never
     command: ['yarn', 'db:migrate']
     environment:
-      MIGRATE_DATABASE_URL: postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc
+      # The dev app database and the test database (make test-db).
+      MIGRATE_DATABASE_URL: postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc,postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc_test
     volumes:
       - ./apps/api/src:/app/apps/api/src
       - ./apps/api/drizzle:/app/apps/api/drizzle
@@ -109,6 +110,7 @@ services:
     command: ['python', '-m', 'app.ingest.worker']
     environment:
       DATABASE_URL: *app-db-url
+      API_URL: http://api:3000
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-dev-internal-token-change-me}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:

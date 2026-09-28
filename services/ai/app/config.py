@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     internal_token: SecretStr = Field(min_length=16)
     openai_api_key: SecretStr | None = None
     app_version: str = "dev"
+    # The NestJS API, which presigns S3 downloads for the worker.
+    api_url: str = "http://api:3000"
+    # A running job whose lease is older than this is considered crashed and is reclaimed.
+    job_lease_seconds: int = 900
 
 
 @lru_cache

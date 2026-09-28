@@ -169,14 +169,20 @@ infra/cdk           AWS CDK stacks: storage and auth now; CI, compute and edge i
 - Docker.
 - Node 24+ and any global `yarn`. The repo vendors Yarn 4 in `.yarn/releases`, so Corepack is not needed.
 - [uv](https://docs.astral.sh/uv/). It installs Python 3.13 by itself.
-- An OpenAI API key, only for `make spike` and, later, ingestion and chat.
+- An OpenAI API key in `.env`: the ingestion worker needs it (embeddings), and so does `make spike`.
 
 ```bash
 make install   # host dependencies for editors and tests (yarn + uv)
 make up        # creates .env on first run, builds and starts the stack, waits until healthy
 make check     # lint, type-check and test TypeScript and Python
-make test-db   # schema contract tests against the running database (needs make up)
+make test-db   # database tests against smartdoc_test in the running stack (needs make up)
 make spike     # OpenAI API spike (needs OPENAI_API_KEY in .env, costs < $0.01)
+```
+
+A realistic test document, without any licensed content:
+
+```bash
+cd services/ai && uv run python scripts/make_sample_pdf.py handbook.pdf --pages 100
 ```
 
 | URL | Service |
@@ -221,7 +227,7 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
 | [docs/planning/reviews/](docs/planning/reviews/) | Adversarial reviews: interviewer, security/correctness, feasibility/cost |
 | [docs/planning/draft-plan-v1.md](docs/planning/draft-plan-v1.md) | The draft plan as it stood before review |
 | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
-| [docs/adr/](docs/adr/) | Architecture decision records (2 of 10 so far) |
+| [docs/adr/](docs/adr/) | Architecture decision records (3 of 10 so far) |
 
 Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, the remaining ADRs and `docs/INTERVIEW.md`.
 

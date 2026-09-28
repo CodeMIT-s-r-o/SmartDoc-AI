@@ -13,11 +13,13 @@ CREATE ROLE smartdoc_owner LOGIN PASSWORD :'owner_pw';
 CREATE ROLE smartdoc_app LOGIN PASSWORD :'app_pw';
 CREATE DATABASE smartdoc OWNER smartdoc_owner;
 CREATE DATABASE smartdoc_eval OWNER smartdoc_owner;
+-- Target of `make test-db`, so tests never race the dev worker on the dev database.
+CREATE DATABASE smartdoc_test OWNER smartdoc_owner;
 -- Application roles have no business in the maintenance database.
 REVOKE CONNECT ON DATABASE postgres FROM PUBLIC;
 SQL
 
-for db in smartdoc smartdoc_eval; do
+for db in smartdoc smartdoc_eval smartdoc_test; do
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$db" <<SQL
 -- Extensions need a superuser; migrations only repeat them with IF NOT EXISTS.
 CREATE EXTENSION IF NOT EXISTS vector;
