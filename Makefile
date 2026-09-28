@@ -5,7 +5,7 @@ AWS_ADMIN_PROFILE ?= codemit
 DEV_APP_PROFILE ?= smartdoc-dev-app
 DEV_STACKS := SmartDoc-Dev-Storage SmartDoc-Dev-Auth
 
-.PHONY: help install up down reset-db logs ps lint typecheck test check format spike \
+.PHONY: help install up down reset-db logs ps lint typecheck test test-db check format spike \
 	cdk-bootstrap cdk-diff-dev cdk-dev dev-config creds invite login-url
 
 help: ## List targets
@@ -46,7 +46,11 @@ test: ## Run unit and e2e tests (no network, no API calls)
 	yarn test
 	cd services/ai && uv run pytest
 
-check: lint typecheck test ## Everything CI will run
+test-db: ## Schema contract tests against the running local database (as the app role)
+	cd services/ai && CONTRACT_DATABASE_URL=postgresql://smartdoc_app:$${DB_APP_PASSWORD:-smartdoc_app_dev}@127.0.0.1:$${DB_PORT:-5432}/smartdoc \
+		uv run pytest tests/test_schema_contract.py -v
+
+check: lint typecheck test ## Everything CI will run (without a database)
 
 format: ## Auto-format TypeScript and Python
 	yarn format

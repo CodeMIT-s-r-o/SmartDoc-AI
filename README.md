@@ -154,7 +154,7 @@ Full threat table: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §
 
 ```
 apps/web            React SPA (Vite)
-apps/api            NestJS API; Drizzle schema and migrations from Block 1.3
+apps/api            NestJS API; Drizzle schema (src/db/schema.ts) and migrations (drizzle/)
 services/ai         FastAPI RAG service and ingestion worker (uv, Python 3.13)
 packages/contracts  Shared SSE event schemas (zod)
 deploy/             Postgres role bootstrap; production compose, Caddyfile and deploy scripts later
@@ -175,6 +175,7 @@ infra/cdk           AWS CDK stacks: storage and auth now; CI, compute and edge i
 make install   # host dependencies for editors and tests (yarn + uv)
 make up        # creates .env on first run, builds and starts the stack, waits until healthy
 make check     # lint, type-check and test TypeScript and Python
+make test-db   # schema contract tests against the running database (needs make up)
 make spike     # OpenAI API spike (needs OPENAI_API_KEY in .env, costs < $0.01)
 ```
 
@@ -220,7 +221,7 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
 | [docs/planning/reviews/](docs/planning/reviews/) | Adversarial reviews: interviewer, security/correctness, feasibility/cost |
 | [docs/planning/draft-plan-v1.md](docs/planning/draft-plan-v1.md) | The draft plan as it stood before review |
 | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
-| [docs/adr/](docs/adr/) | Architecture decision records (1 of 10 so far) |
+| [docs/adr/](docs/adr/) | Architecture decision records (2 of 10 so far) |
 
 Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, the remaining ADRs and `docs/INTERVIEW.md`.
 

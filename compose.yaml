@@ -3,6 +3,11 @@
 name: smartdoc
 
 x-app-db-url: &app-db-url postgresql://smartdoc_app:${DB_APP_PASSWORD:-smartdoc_app_dev}@db:5432/smartdoc
+x-after-migrate: &after-migrate
+  db:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
 
 services:
   db:
@@ -24,11 +29,27 @@ services:
       timeout: 3s
       retries: 20
 
+  # One-shot: applies Drizzle migrations as the owner role, the only place owner credentials exist.
+  migrate:
+    image: smartdoc-api:dev
+    pull_policy: never
+    command: ['yarn', 'db:migrate']
+    environment:
+      MIGRATE_DATABASE_URL: postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc
+    volumes:
+      - ./apps/api/src:/app/apps/api/src
+      - ./apps/api/drizzle:/app/apps/api/drizzle
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
       target: dev
+    image: smartdoc-api:dev
     env_file:
       # Non-secret dev config (make dev-config) and 1-hour SmartDocDevApp credentials (make creds).
       # api is the only service that ever gets AWS credentials.
@@ -45,9 +66,7 @@ services:
       - '127.0.0.1:3000:3000'
     volumes:
       - ./apps/api/src:/app/apps/api/src
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: *after-migrate
     healthcheck:
       test:
         - CMD
@@ -72,9 +91,7 @@ services:
       - '127.0.0.1:8000:8000'
     volumes:
       - ./services/ai/app:/app/app
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: *after-migrate
     healthcheck:
       test:
         - CMD
@@ -88,6 +105,7 @@ services:
 
   ai-worker:
     image: smartdoc-ai:dev
+    pull_policy: never
     command: ['python', '-m', 'app.ingest.worker']
     environment:
       DATABASE_URL: *app-db-url
@@ -96,8 +114,7 @@ services:
     volumes:
       - ./services/ai/app:/app/app
     depends_on:
-      db:
-        condition: service_healthy
+      <<: *after-migrate
       ai:
         condition: service_started
     healthcheck:
