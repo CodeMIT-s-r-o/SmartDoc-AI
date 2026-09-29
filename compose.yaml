@@ -88,6 +88,8 @@ services:
       DATABASE_URL: *app-db-url
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-local-dev-internal-token-change-me}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Point at a black hole (http://10.255.255.1) to demo the degraded mode.
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
     ports:
       - '127.0.0.1:8000:8000'
     volumes:

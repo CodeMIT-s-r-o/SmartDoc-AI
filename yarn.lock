@@ -2438,6 +2438,7 @@ __metadata:
   resolution: "@smartdoc/contracts@workspace:packages/contracts"
   dependencies:
     "@types/node": "npm:^24"
+    tsx: "npm:^4.23.15"
     typescript: "npm:~6.0.3"
     vite: "npm:^8.3.1"
     vitest: "npm:^5.0.2"

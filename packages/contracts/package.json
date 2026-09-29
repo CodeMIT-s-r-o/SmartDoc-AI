@@ -10,18 +10,21 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "schema"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:schema": "tsx scripts/build-schema.ts"
   },
   "dependencies": {
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^24",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "vite": "^8.3.1",
     "vitest": "^5.0.2"

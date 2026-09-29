@@ -17,11 +17,11 @@ INSERT = """
 INSERT INTO llm_calls (
     tenant_id, purpose, model, response_model, service_tier, request_id, document_id,
     input_tokens, cached_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    usage_estimated, latency_ms
+    usage_estimated, latency_ms, ttft_ms
 ) VALUES (
     %(tenant_id)s, %(purpose)s, %(model)s, %(response_model)s, %(service_tier)s, %(request_id)s,
     %(document_id)s, %(input_tokens)s, %(cached_tokens)s, %(cache_write_tokens)s,
-    %(output_tokens)s, %(reasoning_tokens)s, %(usage_estimated)s, %(latency_ms)s
+    %(output_tokens)s, %(reasoning_tokens)s, %(usage_estimated)s, %(latency_ms)s, %(ttft_ms)s
 )
 RETURNING cost_usd
 """
@@ -44,6 +44,7 @@ async def record_llm_call(
     document_id: UUID | None = None,
     usage_estimated: bool = False,
     latency_ms: int | None = None,
+    ttft_ms: int | None = None,
 ) -> Decimal:
     """Returns the cost the database computed for this call."""
     async with pool.connection() as conn, conn.transaction():
@@ -64,6 +65,7 @@ async def record_llm_call(
                 "reasoning_tokens": reasoning_tokens,
                 "usage_estimated": usage_estimated,
                 "latency_ms": latency_ms,
+                "ttft_ms": ttft_ms,
             },
         )
         row = await cur.fetchone()

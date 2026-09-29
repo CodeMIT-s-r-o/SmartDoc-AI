@@ -15,6 +15,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.5 Upload: presigned POST, /complete, internal URL, documents UI | 1.5 h | 0.6 h | done | see 2026-09-28 (Block 1.5) |
 | 1.6 Ingestion worker | 4 h | 1.0 h | done | see 2026-09-28 (Block 0.2 + 1.6) |
 | (extra) UI on Material UI + document delete | – | 0.6 h | done | see 2026-09-28 (UI + delete); pulls part of 1.9 forward |
+| 1.7 Python chat (retrieval, gate, streaming, breaker) | 3.5 h | 1.0 h | done | see 2026-09-28 (Block 1.7) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -284,3 +285,46 @@ recreates the api container itself. Every failed upload of the day traced back t
 **Known gap:** a presigned POST stays valid for 5 minutes, so a client could still upload to the
 key of a document it just deleted. The object would be an orphan with no database row (no
 ingestion, no access); the W2 reconciler removes such prefixes.
+
+## 2026-09-28: Block 1.7 (Python chat)
+
+**Result:** `POST /internal/chat` (internal token) streams SSE per the contract: `meta`, `sources`,
+`token`..., then exactly one `done` or `error`; FastAPI's native SSE pings every 15 s (checked in
+its source: `_PING_INTERVAL = 15.0`). Pipeline: embed the question -> in one transaction verify
+the document scope (`FOR SHARE`) and run hybrid retrieval (HNSW + OR-tsquery FTS, RRF k=60) ->
+gate -> context (top 5, 2,000 tokens, deduplicated) -> prompt v1 (escaped documents, explicit
+cache breakpoint on a 1,264-token static prefix) -> streamed answer with the NO_ANSWER sentinel
+held back -> citations -> one ledger row per call -> `rag_requests` + `retrievals`.
+`POST /internal/retrieve` exposes retrieval alone for the eval harness.
+
+**Verified live** (real OpenAI, a 4-page policies document):
+
+| Question | Result | Prompt cache | Cost | TTFT |
+|---|---|---|---|---|
+| Leave carry-over | correct, cites [1] p. 1 | write 1,264 | $0.000206 | 3.1 s (cold) |
+| EU meal allowance | correct, cites [1] p. 2 | **read 1,264** | **$0.000056** | 1.1 s |
+| Approval for EUR 1,200 | correct inference (manager + department head) | read 1,264 | $0.000058 | 2.1 s |
+| CEO's favourite colour | **gate: no LLM call** | – | $0.00000016 | 0.17 s |
+| OpenAI unreachable (black-hole base URL) | `degraded`: keyword-search passages ("2 Travel", "4 IT security"), $0 | – | $0 | – |
+| Client hangs up after 3 tokens | `aborted`; OpenAI stream closed; estimated chat row (usage_estimated) | – | – | – |
+
+The warm-cache cost matches the formula: (326 x 0.10 + 1,264 x 0.01 + 21 x 0.50) / 1e6 + embedding.
+
+**Breaker, measured:** during the outage the first five requests took ~2.2 s each (2 s connect
+timeout, no retry on the question embedding), then the breaker opened and answers took 0.26 s.
+The first version used the SDK defaults (5 s timeout, one retry) and needed 10-11 s per request.
+
+**Tests:** 21 unit tests (escaping incl. tag breakout and bidi, prefix >= 1,024 tokens,
+breakpoint placement per cache mode, history trimming, citations, breaker, context budget,
+SSE framing and auth) and 10 pipeline tests against Postgres with a fake OpenAI: answer with
+ledger and telemetry, OR-tsquery keyword recall, scope mismatch (other tenant, not ready), gate,
+degraded when embeddings or the chat call fail, open breaker, NO_ANSWER sentinel, broken stream,
+prompt escaping. **Every emitted event is validated against the JSON Schema generated from the
+zod contract** (`packages/contracts/schema/sse-events.schema.json`, kept fresh by a test).
+
+**Findings for W2:**
+- **Meta-questions hit the gate:** "Summarize every policy in detail" is not close to any single
+  chunk and shares no terms, so it is refused without an LLM call. Calibrate tau on the eval and
+  consider routing summary questions differently.
+- The estimated usage on abort counts the whole prompt as uncached: conservative for budgets.
+- `openai` 3.19 uses `httpx2`; timeouts must be `openai.Timeout`, not `httpx.Timeout`.

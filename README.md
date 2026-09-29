@@ -227,7 +227,7 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
 | [docs/planning/reviews/](docs/planning/reviews/) | Adversarial reviews: interviewer, security/correctness, feasibility/cost |
 | [docs/planning/draft-plan-v1.md](docs/planning/draft-plan-v1.md) | The draft plan as it stood before review |
 | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
-| [docs/adr/](docs/adr/) | Architecture decision records (3 of 10 so far) |
+| [docs/adr/](docs/adr/) | Architecture decision records (5 of 10 so far) |
 
 Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, the remaining ADRs and `docs/INTERVIEW.md`.
 
