@@ -295,6 +295,74 @@ describe.skipIf(!url)('chat: conversations and SSE streaming (Postgres + fake AI
     expect(await messages(t.conversationId)).toHaveLength(0);
   });
 
+  it('shows the ledger cost and latency on the answer, and stores thumbs', async () => {
+    const t = await tenant();
+    const events = parseSse(await (await t.send('How many days of annual leave do I get?')).text());
+    const { requestId, assistantMessageId, userMessageId } = events[0]!.data as Record<
+      string,
+      string
+    >;
+    // The AI service writes this row; the fake one does not.
+    await db.query(
+      `INSERT INTO rag_requests (id, tenant_id, conversation_id, config, config_hash,
+         prompt_version, model, status, cost_usd, ttft_ms, total_ms)
+       VALUES ($1, $2, $3, '{}', 'h', 'v1', 'm', 'answered', 0.000381, 1200, 1500)`,
+      [requestId, t.sub, t.conversationId],
+    );
+    const detail = async () =>
+      (
+        (await (await t.call('GET', `/conversations/${t.conversationId}`)).json()) as {
+          messages: { costUsd: number | null; latencyMs: unknown; rating: number | null }[];
+        }
+      ).messages;
+    const rate = (id: string, body: unknown) => t.call('POST', `/messages/${id}/feedback`, body);
+
+    expect(await detail()).toEqual([
+      expect.objectContaining({ costUsd: null, latencyMs: null, rating: null }),
+      expect.objectContaining({ costUsd: 0.000381, latencyMs: { ttft: 1200, total: 1500 } }),
+    ]);
+
+    const down = await rate(assistantMessageId!, {
+      rating: -1,
+      reasons: ['wrong_citation'],
+      comment: 'Page 3 says 20 days',
+    });
+    expect(down.status).toBe(204);
+    const [row] = (
+      await db.query(
+        'SELECT request_id, rating, reasons, comment FROM feedback WHERE message_id = $1',
+        [assistantMessageId],
+      )
+    ).rows;
+    expect(row).toEqual({
+      request_id: requestId,
+      rating: -1,
+      reasons: ['wrong_citation'],
+      comment: 'Page 3 says 20 days',
+    });
+
+    expect((await rate(assistantMessageId!, { rating: 1 })).status).toBe(204);
+    expect((await detail())[1]?.rating).toBe(1);
+    expect(
+      (await db.query('SELECT reasons FROM feedback WHERE message_id = $1', [assistantMessageId]))
+        .rows,
+    ).toEqual([{ reasons: null }]);
+
+    expect((await t.call('DELETE', `/messages/${assistantMessageId}/feedback`)).status).toBe(204);
+    expect((await detail())[1]?.rating).toBeNull();
+
+    // Only answers can be rated, reasons only with a thumbs-down, and never someone else's.
+    expect((await rate(userMessageId!, { rating: 1 })).status).toBe(404);
+    expect((await rate(assistantMessageId!, { rating: 1, reasons: ['other'] })).status).toBe(400);
+    const other = await tenant();
+    expect(
+      (await other.call('POST', `/messages/${assistantMessageId}/feedback`, { rating: -1 })).status,
+    ).toBe(404);
+    expect((await other.call('DELETE', `/messages/${assistantMessageId}/feedback`)).status).toBe(
+      404,
+    );
+  });
+
   it('closes streaming messages left behind by a crashed process', async () => {
     const t = await tenant();
     await db.query(

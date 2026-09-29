@@ -17,6 +17,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | (extra) UI on Material UI + document delete | – | 0.6 h | done | see 2026-09-28 (UI + delete); pulls part of 1.9 forward |
 | 1.7 Python chat (retrieval, gate, streaming, breaker) | 3.5 h | 1.0 h | done | see 2026-09-28 (Block 1.7) |
 | 1.8 NestJS SSE proxy, conversations, idempotency | 1.5 h | 0.8 h | done | see 2026-09-29 (Block 1.8), ADR-007 |
+| 1.9 Chat UI (stream, citations, open PDF p. N, cost badge, thumbs) | 3 h | 1.0 h | done, **MVP gate passed** | see 2026-09-29 (Block 1.9) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -364,3 +365,56 @@ unit tests (frames and a UTF-8 character split across chunks, contract violation
   Add this exact exchange to the 3 follow-up items of `golden_v1`.
 - The cold first request spent 2.3 s in retrieval (embedding + connection warm-up); warm requests
   take 0.2-0.4 s.
+
+## 2026-09-29: Block 1.9 (chat UI)
+
+**Result:** the chat panel replaces the placeholder. It streams answers (`fetch` +
+`EventSourceParserStream`, every event validated by the shared zod contract, as in NestJS), shows
+"Searching your documents…" / "Reading N passages…" before the first token, renders the answer
+with react-markdown (no raw HTML, no images, links only to our origin), turns `[1, 3]` into
+citation markers (a 40-line remark plugin, no dependency), and lists cited sources first with the
+other retrieved passages behind "+N more". A source popover shows section, pages and snippet with
+"Open PDF p. N". Each answer has a cost/latency badge (ledger total from `rag_requests`) and
+thumbs; a thumbs-down is saved at once, then asks for reasons (a fixed enum in
+`packages/contracts`). `no_answer`, `degraded` (closest passages), `aborted` ("Stopped") and
+`error` (Retry) each have their own rendering. Previous chats: a history menu (open, delete) and
+"New chat"; the open chat is remembered per browser. Backend additions: `POST/DELETE
+/api/messages/:id/feedback` (upsert, tenant-joined, answers only) and cost, latency and rating
+on each message.
+
+**Verified live** (browser pane, real OpenAI):
+
+| Check | Result |
+|---|---|
+| History of the Block 1.8 chat | complete answer with marker and "+4 more passages", no_answer with closest passages, aborted with "Stopped"; every badge shows the ledger cost |
+| New question (EU meal allowance) | "Searching…" -> "Reading 5 passages…" -> answer with [1]; badge $0.00030 · 4.1 s; the header's daily spend went $0.0010 -> $0.0013 |
+| Source popover | "2 Travel · p. 2", snippet, "Open PDF p. 2" |
+| Open PDF | presigned GET with `response-content-type=application/pdf`, `inline; filename*=UTF-8''…`, 300 s; the SPA appends `#page=N` |
+| Thumbs-down + "Incomplete" | `feedback` row: rating -1, reasons `{incomplete}`, `request_id` = the answer's `rag_request_id` |
+
+**Tests:** 19 new web tests (markdown safety: script/img/javascript:/data:/external links;
+citation markers; stream parsing across 7-byte chunks with an invalid event and a ping; replay;
+problem+json; live-turn merge with stored messages; statuses; Stop keeps the partial answer;
+retry after an unacknowledged send reuses the `clientMessageId`; component states, popover,
+thumbs) and 1 DB test (ledger cost/latency on the answer, feedback upsert/change/delete, 404 for
+user messages and other tenants, 400 for reasons on a thumbs-up).
+
+**Surprises:**
+- **Popover anchored to the top of the page:** an inline `components={{ a: … }}` object gives
+  react-markdown a new element type on every render, so opening the popover remounted the
+  marker and detached its anchor. Fixed with module-level components and a context for the
+  citation renderer.
+- The dev AWS credentials (12 h) had expired: "Open PDF" got a 503 `UNAVAILABLE` with a clear
+  detail; the UI now says "try again" for that and "no longer available" only for 404.
+  `make creds` fixed it.
+- The browser pane blocks popups and cross-origin navigation started by automation, so the PDF
+  tab itself has to be checked with a real click; the URL parameters were verified instead.
+
+**Findings for W2:**
+- **Small documents lose retrieval to a large one:** multi-topic questions ("travel, expense
+  approval and IT security rules") retrieved only chunks from the 102-page synthetic handbook, so
+  the 4-page policies document never reached the top 5 and the answer was `no_answer`. Candidates:
+  a per-document cap or MMR in `assemble`, and golden items that mix both documents.
+- **Bundle:** 885 kB / 269 kB gzip (MUI, zod, the unified/remark stack). Split vendor chunks for
+  caching and check `zod/mini` for the browser before the prod deploy.
+

@@ -1,11 +1,27 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import type { FeedbackRequest } from '@smartdoc/contracts';
+import { and, asc, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module.js';
-import { type Citation, conversations, documents, messages } from '../db/schema.js';
+import {
+  type Citation,
+  conversations,
+  documents,
+  feedback,
+  messages,
+  ragRequests,
+} from '../db/schema.js';
 
 export type ConversationRow = typeof conversations.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type MessageStatus = MessageRow['status'];
+
+/** A message as the UI shows it: the answer's cost and latency, and the user's rating. */
+export interface MessageView extends MessageRow {
+  costUsd: string | null;
+  ttftMs: number | null;
+  totalMs: number | null;
+  rating: number | null;
+}
 
 export interface Turn {
   user: MessageRow;
@@ -66,14 +82,27 @@ export class ConversationsRepository {
     return rows.length > 0;
   }
 
-  listMessages(conversationId: string): Promise<MessageRow[]> {
-    // Both rows of a turn share created_at (now() is the transaction start): 'user' sorts after
-    // 'assistant', so the question comes first only with role descending.
-    return this.db
-      .select()
+  async listMessages(conversationId: string): Promise<MessageView[]> {
+    const rows = await this.db
+      .select({
+        message: messages,
+        costUsd: ragRequests.costUsd,
+        ttftMs: ragRequests.ttftMs,
+        totalMs: ragRequests.totalMs,
+        rating: feedback.rating,
+      })
       .from(messages)
+      // The user message carries the same rag_request_id; only the answer shows the cost.
+      .leftJoin(
+        ragRequests,
+        and(eq(ragRequests.id, messages.ragRequestId), eq(messages.role, 'assistant')),
+      )
+      .leftJoin(feedback, eq(feedback.messageId, messages.id))
       .where(eq(messages.conversationId, conversationId))
+      // Both rows of a turn share created_at (now() is the transaction start): 'user' sorts after
+      // 'assistant', so the question comes first only with role descending.
       .orderBy(asc(messages.createdAt), desc(messages.role));
+    return rows.map(({ message, ...extras }) => ({ ...message, ...extras }));
   }
 
   /** A turn is a user message and the assistant message sharing its rag_request_id. */
@@ -206,5 +235,46 @@ export class ConversationsRepository {
   async ownsReadyDocuments(tenantId: string, ids: string[]): Promise<boolean> {
     const ready = new Set(await this.readyDocumentIds(tenantId));
     return ids.every((id) => ready.has(id));
+  }
+
+  /** Upserts the caller's rating of a finished answer; false when there is no such answer. */
+  async saveFeedback(tenantId: string, messageId: string, body: FeedbackRequest): Promise<boolean> {
+    const answer = await this.findRateable(tenantId, messageId);
+    if (!answer) {
+      return false;
+    }
+    const values = {
+      rating: body.rating,
+      reasons: body.reasons?.length ? body.reasons : null,
+      comment: body.comment || null,
+    };
+    await this.db
+      .insert(feedback)
+      .values({ messageId, tenantId, requestId: answer.ragRequestId, ...values })
+      .onConflictDoUpdate({ target: feedback.messageId, set: values });
+    return true;
+  }
+
+  async deleteFeedback(tenantId: string, messageId: string): Promise<boolean> {
+    if (!(await this.findRateable(tenantId, messageId))) {
+      return false;
+    }
+    await this.db.delete(feedback).where(eq(feedback.messageId, messageId));
+    return true;
+  }
+
+  private async findRateable(tenantId: string, messageId: string) {
+    const [answer] = await this.db
+      .select({ ragRequestId: messages.ragRequestId })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.id, messageId),
+          eq(messages.tenantId, tenantId),
+          eq(messages.role, 'assistant'),
+          ne(messages.status, 'streaming'),
+        ),
+      );
+    return answer;
   }
 }

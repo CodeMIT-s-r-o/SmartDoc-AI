@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Citation } from '../db/schema.js';
-import type { ConversationRow, MessageRow } from './conversations.repository.js';
+import type { ConversationRow, MessageRow, MessageView } from './conversations.repository.js';
 
 export const createConversationSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
@@ -29,6 +29,10 @@ export interface MessageDto {
   content: string;
   status: MessageRow['status'];
   citations: Citation[] | null;
+  /** Answers only: what the request cost (ledger total) and how long it took. */
+  costUsd: number | null;
+  latencyMs: { ttft: number | null; total: number | null } | null;
+  rating: 1 | -1 | null;
   createdAt: string;
 }
 
@@ -39,11 +43,20 @@ export const toConversationDto = (row: ConversationRow): ConversationDto => ({
   updatedAt: row.updatedAt.toISOString(),
 });
 
-export const toMessageDto = (row: MessageRow): MessageDto => ({
-  id: row.id,
-  role: row.role,
-  content: row.content,
-  status: row.status,
-  citations: row.citations ?? null,
-  createdAt: row.createdAt.toISOString(),
-});
+export const toMessageDto = (row: MessageRow | MessageView): MessageDto => {
+  const view: Partial<MessageView> = row;
+  return {
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    status: row.status,
+    citations: row.citations ?? null,
+    costUsd: view.costUsd == null ? null : Number(view.costUsd),
+    latencyMs:
+      view.totalMs == null && view.ttftMs == null
+        ? null
+        : { ttft: view.ttftMs ?? null, total: view.totalMs ?? null },
+    rating: view.rating === 1 || view.rating === -1 ? view.rating : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+};

@@ -4,9 +4,10 @@ import { ChatHousekeeping } from '../chat/chat-housekeeping.js';
 import { ChatService } from '../chat/chat.service.js';
 import { ConversationsController } from './conversations.controller.js';
 import { ConversationsRepository } from './conversations.repository.js';
+import { MessagesController } from './messages.controller.js';
 
 @Module({
-  controllers: [ConversationsController],
+  controllers: [ConversationsController, MessagesController],
   providers: [ConversationsRepository, ChatService, AiClient, ChatHousekeeping],
 })
 export class ConversationsModule {}

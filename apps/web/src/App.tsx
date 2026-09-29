@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
 import { api, type Me } from './api';
 import { useSignOut } from './auth/useSignOut';
-import { ChatPlaceholder } from './chat/ChatPlaceholder';
+import { ChatPanel } from './chat/ChatPanel';
 import { AppHeader } from './components/AppHeader';
 import { SignInScreen } from './components/SignInScreen';
 import { DocumentsPanel } from './documents/DocumentsPanel';
@@ -48,9 +48,7 @@ function SignedIn({ accessToken }: { accessToken: string }) {
           }}
         >
           <DocumentsPanel accessToken={accessToken} documents={documents} />
-          <Box sx={{ minHeight: { md: 480 }, height: '100%' }}>
-            <ChatPlaceholder readyDocuments={ready} />
-          </Box>
+          <ChatPanel accessToken={accessToken} readyDocuments={ready} />
         </Box>
       </Container>
     </>

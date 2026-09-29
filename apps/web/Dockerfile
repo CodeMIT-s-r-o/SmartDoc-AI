@@ -17,6 +17,8 @@ RUN yarn workspaces focus @smartdoc/web
 
 FROM deps AS dev
 COPY --chown=node:node tsconfig.base.json ./
+# The shared SSE contract, read from source through the Vite alias.
+COPY --chown=node:node packages/contracts packages/contracts
 COPY --chown=node:node apps/web apps/web
 WORKDIR /app/apps/web
 EXPOSE 5173

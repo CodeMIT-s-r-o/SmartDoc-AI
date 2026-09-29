@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 // Same-origin API in every environment: Vite proxies /api locally, CloudFront routes /api/* in prod.
@@ -7,6 +8,14 @@ const apiProxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:3000';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // The shared SSE contract straight from source: no build step, and edits hot-reload.
+    alias: {
+      '@smartdoc/contracts': fileURLToPath(
+        new URL('../../packages/contracts/src/index.ts', import.meta.url),
+      ),
+    },
+  },
   server: {
     host: true,
     port: 5173,

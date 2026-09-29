@@ -144,6 +144,7 @@ services:
       - ./apps/web/src:/app/apps/web/src
       - ./apps/web/public:/app/apps/web/public
       - ./apps/web/index.html:/app/apps/web/index.html
+      - ./packages/contracts/src:/app/packages/contracts/src
     depends_on:
       api:
         condition: service_started
