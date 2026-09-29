@@ -17,6 +17,7 @@ help: ## List targets
 
 install: ## Install JS and Python dependencies on the host (editor support, tests)
 	yarn install
+	yarn build:contracts
 	cd services/ai && uv sync
 
 up: .env ## Build and start the local stack, wait until every service is healthy

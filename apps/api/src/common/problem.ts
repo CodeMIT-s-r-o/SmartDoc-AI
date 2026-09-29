@@ -10,6 +10,8 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'CONFLICT'
   | 'INVALID_STATE'
+  | 'IN_PROGRESS'
+  | 'NO_DOCUMENTS'
   | 'UPLOAD_NOT_FOUND'
   | 'UNPROCESSABLE'
   | 'INVALID_FILE'

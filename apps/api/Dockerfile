@@ -23,6 +23,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 USER node
 COPY --chown=node:node tsconfig.base.json ./
+# The shared SSE contract is a workspace package: build it into the image.
+COPY --chown=node:node packages/contracts packages/contracts
+RUN yarn workspace @smartdoc/contracts build
 COPY --chown=node:node apps/api apps/api
 WORKDIR /app/apps/api
 EXPOSE 3000

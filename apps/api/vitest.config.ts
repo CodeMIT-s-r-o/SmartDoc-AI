@@ -1,7 +1,16 @@
+import { fileURLToPath } from 'node:url';
 import swc from 'unplugin-swc';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // Tests use the contract's source directly, so they never depend on a stale build.
+  resolve: {
+    alias: {
+      '@smartdoc/contracts': fileURLToPath(
+        new URL('../../packages/contracts/src/index.ts', import.meta.url),
+      ),
+    },
+  },
   // SWC emits the decorator metadata that Nest's dependency injection relies on.
   plugins: [swc.vite({ module: { type: 'es6' } })],
   test: {

@@ -16,6 +16,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.6 Ingestion worker | 4 h | 1.0 h | done | see 2026-09-28 (Block 0.2 + 1.6) |
 | (extra) UI on Material UI + document delete | – | 0.6 h | done | see 2026-09-28 (UI + delete); pulls part of 1.9 forward |
 | 1.7 Python chat (retrieval, gate, streaming, breaker) | 3.5 h | 1.0 h | done | see 2026-09-28 (Block 1.7) |
+| 1.8 NestJS SSE proxy, conversations, idempotency | 1.5 h | 0.8 h | done | see 2026-09-29 (Block 1.8), ADR-007 |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -328,3 +329,38 @@ zod contract** (`packages/contracts/schema/sse-events.schema.json`, kept fresh b
   consider routing summary questions differently.
 - The estimated usage on abort counts the whole prompt as uncached: conservative for budgets.
 - `openai` 3.19 uses `httpx2`; timeouts must be `openai.Timeout`, not `httpx.Timeout`.
+
+## 2026-09-29: Block 1.8 (NestJS SSE proxy)
+
+**Result:** `/api/conversations` CRUD and `POST /api/conversations/:id/messages`, which streams
+`ack` + the AI service's events straight through (one read loop, contract-validated collector),
+pre-inserts the assistant message as `streaming`, and persists it on done, close or error. The
+same `clientMessageId` twice never calls the LLM twice. A 60 s housekeeping tick closes messages
+left `streaming` by a crash. Decisions in [ADR-007](adr/007-streaming.md).
+
+**Verified live** (browser session -> NestJS -> Python -> OpenAI, two ready documents):
+
+| Step | Result | Cost | Timing |
+|---|---|---|---|
+| "How many days of annual leave do I get?" | `ack, meta, sources, token x14, done`; "25 paid annual leave days [3]"; both messages stored, citation 3 flagged `cited` | $0.000381 (cache write 1,264) | first token 4.56 s in the browser vs 4.50 s TTFT in Python (cold) |
+| Same `clientMessageId` again | 200 JSON with the stored answer, no new `rag_requests` row | $0 | – |
+| Follow-up "And how many of them can I carry over?" | history reached the model, but retrieval ran on the literal follow-up and missed the leave chunk -> `no_answer_model` | $0.000240 (**cache read 1,264**) | TTFT 1.2 s |
+| Client aborts after 3 tokens | message `aborted` with the partial text; ledger row `usage_estimated` | $0.000337 (estimate, no cache credit) | – |
+
+**Tests:** 12 new DB tests (real HTTP against a fake AI service, see ADR-007) and 3 collector
+unit tests (frames and a UTF-8 character split across chunks, contract violations counted).
+
+**Surprises:**
+- **Ordering bug caught by the history test:** both rows of a turn share `created_at` (`now()`
+  is the transaction start), and the role tie-break was inverted in both queries, so history
+  went to the model as answer-before-question. Fixed; the conversation detail test now checks
+  the order too.
+- The API image now builds `@smartdoc/contracts` (a workspace package with a `dist/`), and
+  `make install` / `yarn typecheck` build it first; Vitest aliases it to the TS source.
+
+**Findings for W2:**
+- **The follow-up miss is the case for the standalone rewrite** (plan §7, cut-if-behind): with
+  history, retrieval needs "how many annual leave days can I carry over", not "how many of them".
+  Add this exact exchange to the 3 follow-up items of `golden_v1`.
+- The cold first request spent 2.3 s in retrieval (embedding + connection warm-up); warm requests
+  take 0.2-0.4 s.

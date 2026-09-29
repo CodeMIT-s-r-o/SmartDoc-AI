@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { TenantThrottlerGuard } from './auth/tenant-throttler.guard.js';
 import { ProblemJsonFilter } from './common/problem-json.filter.js';
 import { type Env, validateEnv } from './config/env.js';
+import { ConversationsModule } from './conversations/conversations.module.js';
 import { DbModule } from './db/db.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
 import { HealthModule } from './health/health.module.js';
@@ -26,6 +27,7 @@ import { UsersModule } from './users/users.module.js';
     AuthModule,
     UsersModule,
     DocumentsModule,
+    ConversationsModule,
     HealthModule,
   ],
   providers: [

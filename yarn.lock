@@ -2398,6 +2398,7 @@ __metadata:
     "@nestjs/platform-express": "npm:^12.1.0"
     "@nestjs/testing": "npm:^12.1.0"
     "@nestjs/throttler": "npm:^6.7.1"
+    "@smartdoc/contracts": "workspace:^"
     "@swc/core": "npm:^1.16.2"
     "@types/node": "npm:^24"
     "@types/pg": "npm:^8.23.1"
@@ -2405,6 +2406,7 @@ __metadata:
     aws-jwt-verify: "npm:^5.2.1"
     drizzle-kit: "npm:^0.31.11"
     drizzle-orm: "npm:^0.45.3"
+    eventsource-parser: "npm:^4.1.1"
     pg: "npm:^8.23.0"
     reflect-metadata: "npm:^0.2.2"
     rxjs: "npm:^7.8.2"
@@ -2433,7 +2435,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@smartdoc/contracts@workspace:packages/contracts":
+"@smartdoc/contracts@workspace:^, @smartdoc/contracts@workspace:packages/contracts":
   version: 0.0.0-use.local
   resolution: "@smartdoc/contracts@workspace:packages/contracts"
   dependencies:
@@ -4524,6 +4526,13 @@ __metadata:
   version: 1.8.1
   resolution: "etag@npm:1.8.1"
   checksum: 10c0/12be11ef62fb9817314d790089a0a49fae4e1b50594135dcb8076312b7d7e470884b5100d249b28c18581b7fd52f8b485689ffae22a11ed9ec17377a33a08f84
+  languageName: node
+  linkType: hard
+
+"eventsource-parser@npm:^4.1.1":
+  version: 4.1.1
+  resolution: "eventsource-parser@npm:4.1.1"
+  checksum: 10c0/cae2e8960409cd20cb7623b5f1f37ea41ec984e776c1c3fac0a0fe77efe292aa019e0d40427c87b5a13dbaf0b50133866afcb6bf3100dc49c2649758ebd29cbe
   languageName: node
   linkType: hard
 
