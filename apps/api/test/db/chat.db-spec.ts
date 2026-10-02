@@ -1,17 +1,10 @@
-import 'reflect-metadata';
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AppModule } from '../../src/app.module.js';
-import { configureApp } from '../../src/app.setup.js';
-import { AccessTokenVerifier } from '../../src/auth/access-token-verifier.js';
 import { ChatHousekeeping } from '../../src/chat/chat-housekeeping.js';
-import { CognitoUserInfoClient } from '../../src/users/user-info.client.js';
+import { startDbTestApp, userClient } from '../support/db-app.js';
 import { FakeAiServer } from '../support/fake-ai-server.js';
-import { accessToken, TEST_JWKS } from '../support/tokens.js';
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -41,15 +34,10 @@ describe.skipIf(!url)('chat: conversations and SSE streaming (Postgres + fake AI
   /** A signed-in tenant with one ready document. */
   const tenant = async () => {
     const sub = randomUUID();
-    const token = accessToken({ sub });
     const documentId = randomUUID();
+    const asUser = userClient(base, sub);
     const call = (method: string, path: string, body?: unknown, signal?: AbortSignal) =>
-      fetch(`${base}/api${path}`, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal,
-      });
+      asUser(method, `/api${path}`, body, signal);
     // First request creates the users row, then the document can reference it.
     await call('GET', '/me');
     await db.query(
@@ -87,15 +75,7 @@ describe.skipIf(!url)('chat: conversations and SSE streaming (Postgres + fake AI
 
   beforeAll(async () => {
     await ai.start();
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(CognitoUserInfoClient)
-      .useValue({ getEmail: vi.fn(() => Promise.resolve(`${randomUUID()}@chat-e2e.test`)) })
-      .compile();
-    moduleRef.get(AccessTokenVerifier).cacheJwks(TEST_JWKS as never);
-    app = moduleRef.createNestApplication();
-    configureApp(app);
-    await app.listen(0, '127.0.0.1');
-    base = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+    ({ app, base } = await startDbTestApp('chat-e2e.test'));
   });
 
   afterAll(async () => {

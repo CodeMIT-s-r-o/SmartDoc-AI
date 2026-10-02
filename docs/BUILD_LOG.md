@@ -18,6 +18,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.7 Python chat (retrieval, gate, streaming, breaker) | 3.5 h | 1.0 h | done | see 2026-09-28 (Block 1.7) |
 | 1.8 NestJS SSE proxy, conversations, idempotency | 1.5 h | 0.8 h | done | see 2026-09-29 (Block 1.8), ADR-007 |
 | 1.9 Chat UI (stream, citations, open PDF p. N, cost badge, thumbs) | 3 h | 1.0 h | done, **MVP gate passed** | see 2026-09-29 (Block 1.9) |
+| 2.1 Generated IDOR test, ledger formula tests | 1 h | 0.5 h | done (scope hash moves to 2.5) | see 2026-10-01 (Block 2.1) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -417,4 +418,40 @@ user messages and other tenants, 400 for reasons on a thumbs-up).
   a per-document cap or MMR in `assemble`, and golden items that mix both documents.
 - **Bundle:** 885 kB / 269 kB gzip (MUI, zod, the unified/remark stack). Split vendor chunks for
   caching and check `zod/mini` for the browser before the prod deploy.
+
+## 2026-10-01: Block 2.1 (tenant isolation and core tests)
+
+**Result:**
+- **Generated IDOR test** (`apps/api/test/db/idor.db-spec.ts`). It reads the routes Express
+  actually mounts (global prefix included), not a hand-kept list:
+  - User B calls every `:id` route with user A's ids and must get 404 `NOT_FOUND`, and A's
+    document, conversation, messages and rating must be unchanged afterwards.
+  - Every parameterless `GET` (`/me`, lists, health) as B must not contain any of A's ids or
+    titles.
+  - Internal routes must refuse a user token (401).
+  - A route without a fixture, or a fixture for a route that no longer exists, fails the test.
+  - The owner first reaches every fixture id (200/204), so a 404 is isolation, not a typo.
+- **Ledger formula tests** (`services/ai/tests/db/test_ledger.py`), pinned to calls measured
+  live:
+  - warm cache (326 + 1,264 cached + 21 out) = $0.00005574;
+  - cold cache write = $0.0003812;
+  - reasoning tokens are not billed twice;
+  - Flex is half price, and embeddings have their own price;
+  - an unknown model, or a call before the price's `effective_from`, is refused;
+  - spend accrues per Europe/Bratislava day (21:59 vs 22:30 UTC), and `requests` counts chat
+    only;
+  - the app role cannot update or delete `llm_calls` or change prices.
+- Already covered before this block: page mapping (`test_chunk`), the citation parser
+  (`test_citations`) and lease CAS with two workers (`test_jobs`). The scope hash belongs to the
+  exact cache and moves to 2.5.
+
+**Proof that the IDOR test bites:** with the tenant filter removed from
+`ConversationsRepository.findOwned`, it failed on `GET /api/conversations/:id` (200, a leak) and
+`POST …/messages` (409, past the ownership check). `PATCH` and `DELETE` still answered 404
+because their own queries filter by tenant too (defense in depth). The change was reverted.
+
+**Tests:** 5 new API DB tests (25 in total) and 7 new Python DB tests (40 in total).
+
+**Surprises:** the stack was down after two days, so the first ledger run spent 3.5 minutes
+retrying connections before erroring. `make up` brought everything back healthy.
 
