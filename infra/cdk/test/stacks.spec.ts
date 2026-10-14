@@ -8,9 +8,12 @@ const env = { account: '123456789012', region: 'eu-central-1' };
 let app: App;
 const template = (id: string): Template => Template.fromStack(app.node.findChild(id) as Stack);
 
+// Synthesize every stack once, up front: it is CPU-bound and can take longer than the default
+// 5-second test timeout when `make check` runs all workspaces in parallel.
 beforeAll(() => {
   app = buildApp(new App(), env);
-});
+  app.synth();
+}, 30_000);
 
 describe('storage', () => {
   it('locks the docs bucket down: private, encrypted, versioned, TLS-only', () => {

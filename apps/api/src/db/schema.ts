@@ -414,11 +414,45 @@ export const userDailyUsage = pgTable(
     /** Chat requests (purpose = 'chat') only. */
     requests: integer().notNull().default(0),
   },
-  (t) => [primaryKey({ columns: [t.tenantId, t.day] })],
+  (t) => [
+    primaryKey({ columns: [t.tenantId, t.day] }),
+    // A release that runs twice, or on the wrong day, fails loudly instead of freeing budget.
+    check('user_daily_usage_reserved_check', sql`reserved_usd >= 0`),
+  ],
 );
 
-export const appDailyUsage = pgTable('app_daily_usage', {
-  day: date().primaryKey(),
-  spentUsd: usd().notNull().default('0'),
-  reservedUsd: usd().notNull().default('0'),
-});
+export const appDailyUsage = pgTable(
+  'app_daily_usage',
+  {
+    day: date().primaryKey(),
+    spentUsd: usd().notNull().default('0'),
+    reservedUsd: usd().notNull().default('0'),
+  },
+  () => [check('app_daily_usage_reserved_check', sql`reserved_usd >= 0`)],
+);
+
+/**
+ * One row per chat request that holds budget. The stored `day` makes the release land on the day
+ * that was charged even across midnight; `expires_at` lets the housekeeping tick release what a
+ * crashed request left behind.
+ */
+export const budgetReservations = pgTable(
+  'budget_reservations',
+  {
+    /** The rag request id that flows through NestJS, Python and the ledger. */
+    requestId: uuid().primaryKey(),
+    tenantId: tenantId(),
+    /** Calendar day in Europe/Bratislava that the reservation was charged to. */
+    day: date().notNull(),
+    estUsd: usd().notNull(),
+    createdAt: createdAt(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    releasedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    index('budget_reservations_open_expires_idx')
+      .on(t.expiresAt)
+      .where(sql`released_at IS NULL`),
+    check('budget_reservations_est_check', sql`est_usd > 0`),
+  ],
+);

@@ -15,6 +15,10 @@ export const envSchema = z.object({
   /** Private docs bucket; credentials come from the default chain (instance role, or make creds). */
   S3_DOCS_BUCKET: z.string().min(3),
   THROTTLE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
+  /** Daily AI spend across all users; each user also has users.daily_limit_usd. */
+  GLOBAL_DAILY_CAP_USD: z.coerce.number().positive().default(2),
+  /** The chat model the AI service uses (same variable), so budget estimates use its price. */
+  RAG_CHAT_MODEL: z.string().min(1).default('gpt-6-luna'),
   /** Reverse proxies in front of the API: 0 locally, 2 in prod (CloudFront + Caddy). */
   TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().default(0),
   APP_VERSION: z.string().default('dev'),

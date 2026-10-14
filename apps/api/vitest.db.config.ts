@@ -27,6 +27,8 @@ export default defineConfig({
       COGNITO_CLIENT_ID: 'test-web-client',
       COGNITO_DOMAIN: 'https://smartdoc-test.auth.eu-central-1.amazoncognito.com',
       THROTTLE_LIMIT_PER_MINUTE: '1000',
+      // The Python DB tests bill real ledger rows into today's app_daily_usage on every run.
+      GLOBAL_DAILY_CAP_USD: '1000',
       AWS_REGION: 'eu-central-1',
       S3_DOCS_BUCKET: 'smartdoc-test-docs',
     },

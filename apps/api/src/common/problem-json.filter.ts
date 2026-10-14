@@ -5,10 +5,11 @@ import {
   HttpException,
   Logger,
 } from '@nestjs/common';
-import { toProblem } from './problem.js';
+import { ProblemException, toProblem } from './problem.js';
 
 /** The parts of the Express response the filter uses. */
 interface ProblemResponse {
+  setHeader(name: string, value: string): void;
   status(code: number): ProblemResponse;
   type(contentType: string): ProblemResponse;
   json(body: unknown): void;
@@ -24,11 +25,12 @@ export class ProblemJsonFilter implements ExceptionFilter {
     if (!(exception instanceof HttpException)) {
       this.logger.error(exception);
     }
-    host
-      .switchToHttp()
-      .getResponse<ProblemResponse>()
-      .status(problem.status)
-      .type('application/problem+json')
-      .json(problem);
+    const res = host.switchToHttp().getResponse<ProblemResponse>();
+    if (exception instanceof ProblemException) {
+      for (const [name, value] of Object.entries(exception.headers)) {
+        res.setHeader(name, value);
+      }
+    }
+    res.status(problem.status).type('application/problem+json').json(problem);
   }
 }

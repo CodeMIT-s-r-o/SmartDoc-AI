@@ -19,17 +19,20 @@ import { useState } from 'react';
 import type { Me } from '../api';
 
 const usd = (value: number, digits: number) => `$${value.toFixed(digits)}`;
+/** A limit as set: $0.25, but $0.001 rather than a rounded $0.00. */
+const limitUsd = (value: number) =>
+  value >= 0.01 ? usd(value, 2) : `$${Number(value.toFixed(4)).toString()}`;
 
 function UsageChip({ me }: { me: Me }) {
   const share =
     me.dailyLimitUsd > 0 ? Math.min(100, (me.spentTodayUsd / me.dailyLimitUsd) * 100) : 0;
   return (
     <Tooltip
-      title={`Today's AI spend: ${usd(me.spentTodayUsd, 5)} of your ${usd(me.dailyLimitUsd, 2)} daily limit`}
+      title={`Today's AI spend: ${usd(me.spentTodayUsd, 5)} of your ${limitUsd(me.dailyLimitUsd)} daily limit`}
     >
       <Box sx={{ display: { xs: 'none', sm: 'block' }, minWidth: 150 }}>
         <Typography variant="caption" color="text.secondary">
-          Today {usd(me.spentTodayUsd, 4)} / {usd(me.dailyLimitUsd, 2)}
+          Today {usd(me.spentTodayUsd, 4)} / {limitUsd(me.dailyLimitUsd)}
         </Typography>
         <LinearProgress
           variant="determinate"

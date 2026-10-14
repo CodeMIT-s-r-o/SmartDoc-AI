@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api';
 import {
+  type BudgetBlock,
+  budgetBlock,
   clearRating,
   type ConversationDetail,
   createConversation,
@@ -41,6 +43,7 @@ export function useChat(token: string) {
   const queryClient = useQueryClient();
   const [conversationId, setConversationId] = useState<string | null>(readStored);
   const [live, setLive] = useState<LiveTurn | null>(null);
+  const [budget, setBudget] = useState<BudgetBlock | null>(null);
   const abort = useRef<AbortController | null>(null);
 
   const conversation = useQuery({
@@ -94,10 +97,16 @@ export function useChat(token: string) {
           id,
           { clientMessageId, content: question },
           controller.signal,
-          (event) => update((turn) => applyEvent(turn, event)),
+          (event) => {
+            if (event.event === 'ack') {
+              setBudget(null); // the API reserved budget for this question, so it is available
+            }
+            update((turn) => applyEvent(turn, event));
+          },
         );
         replayed = result.kind === 'replay';
       } catch (error) {
+        setBudget((current) => budgetBlock(error) ?? current);
         update((turn) =>
           controller.signal.aborted
             ? { ...turn, stopped: true }
@@ -163,6 +172,8 @@ export function useChat(token: string) {
     items: chatItems(conversation.data?.messages ?? [], live),
     live,
     running: live?.running ?? false,
+    /** Set when a send was refused for budget; the banner hides itself after the reset. */
+    budget,
     select,
     send,
     stop,

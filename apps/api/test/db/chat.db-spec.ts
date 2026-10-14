@@ -351,7 +351,7 @@ describe.skipIf(!url)('chat: conversations and SSE streaming (Postgres + fake AI
       [t.conversationId, t.sub],
     );
 
-    const closed = await app.get(ChatHousekeeping).tick();
+    const { messages: closed } = await app.get(ChatHousekeeping).tick();
 
     expect(closed).toBeGreaterThanOrEqual(1);
     expect((await messages(t.conversationId))[0]?.status).toBe('error');

@@ -18,6 +18,7 @@ export type ErrorCode =
   | 'FILE_TOO_LARGE'
   | 'QUOTA_EXCEEDED'
   | 'RATE_LIMITED'
+  | 'BUDGET_EXCEEDED'
   | 'UNAVAILABLE'
   | 'INTERNAL';
 
@@ -38,6 +39,8 @@ export class ProblemException extends HttpException {
     readonly code: ErrorCode,
     detail: string,
     readonly extensions: Record<string, unknown> = {},
+    /** Response headers that belong to the error, e.g. Retry-After. */
+    readonly headers: Record<string, string> = {},
   ) {
     super({ code, detail, ...extensions }, status);
   }

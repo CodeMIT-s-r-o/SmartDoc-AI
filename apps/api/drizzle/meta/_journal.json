@@ -15,6 +15,13 @@
       "when": 1790542587491,
       "tag": "0001_ledger_search_and_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790961765674,
+      "tag": "0002_budget_reservations",
+      "breakpoints": true
     }
   ]
 }

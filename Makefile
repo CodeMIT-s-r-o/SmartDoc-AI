@@ -84,5 +84,11 @@ creds: ## Export 12-hour SmartDocDevApp credentials for the api container, then 
 invite: ## Invite a user to the dev pool: make invite EMAIL=you@example.com [ADMIN=1]
 	AWS_PROFILE=$(AWS_ADMIN_PROFILE) scripts/invite-user.sh $(EMAIL) $(if $(ADMIN),--admin)
 
+budget: ## Set a user's daily AI budget (budget demo): make budget EMAIL=you@example.com USD=0.001
+	@test -n "$(EMAIL)" -a -n "$(USD)" || { echo "usage: make budget EMAIL=... USD=..."; exit 1; }
+	@echo "UPDATE users SET daily_limit_usd = :'usd'::numeric WHERE email = :'email' RETURNING email, daily_limit_usd;" \
+	  | docker compose exec -T db psql -U smartdoc_owner -d smartdoc -v ON_ERROR_STOP=1 \
+	      -v email='$(EMAIL)' -v usd='$(USD)'
+
 login-url: ## Print a managed-login URL to test dev sign-in (until the SPA handles it in Block 1.4)
 	@scripts/login-url.sh

@@ -19,6 +19,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.8 NestJS SSE proxy, conversations, idempotency | 1.5 h | 0.8 h | done | see 2026-09-29 (Block 1.8), ADR-007 |
 | 1.9 Chat UI (stream, citations, open PDF p. N, cost badge, thumbs) | 3 h | 1.0 h | done, **MVP gate passed** | see 2026-09-29 (Block 1.9) |
 | 2.1 Generated IDOR test, ledger formula tests | 1 h | 0.5 h | done (scope hash moves to 2.5) | see 2026-10-01 (Block 2.1) |
+| 2.4 Budgets: reservations, release, sweeper, 429 + banner | 1 h | 0.9 h | done | see 2026-10-05 (Block 2.4), ADR-008 |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -454,4 +455,71 @@ because their own queries filter by tenant too (defense in depth). The change wa
 
 **Surprises:** the stack was down after two days, so the first ledger run spent 3.5 minutes
 retrying connections before erroring. `make up` brought everything back healthy.
+
+## 2026-10-05: Block 2.4 (budgets)
+
+**Result:**
+- **`BudgetService`** (NestJS) reserves before the chat request reaches the AI service. The
+  reservation SQL is the one in §7 of the plan, and the decisions are in ADR-008:
+  - The estimate is the worst case, $0.00076 for gpt-6-luna, priced from `model_prices` for
+    `RAG_CHAT_MODEL`.
+  - First the user's limit (default $0.25), then the global cap (`GLOBAL_DAILY_CAP_USD`, $2).
+  - Refused → 429 problem+json `BUDGET_EXCEEDED` with `scope`, `resetsAt` and `Retry-After`
+    until midnight in Bratislava, sent before any SSE byte and with nothing stored.
+- **Release and housekeeping:**
+  - Release is idempotent and uses the reservation's stored day.
+  - It runs on every exit (done, error, abort, duplicate `clientMessageId`), before the
+    response ends.
+  - The housekeeping tick now also releases reservations that expired after 5 minutes.
+  - New table `budget_reservations` (migration 0002) and `CHECK (reserved_usd >= 0)` on both
+    usage tables.
+- **Web:** the 429 carries `scope` and `resetsAt` into a warning banner above the composer
+  ("New questions work again at 00:00 (in 2 h 14 min)"). It clears on the next accepted question
+  (`ack`) or when the time passes.
+- **`make budget EMAIL=… USD=…`** sets a user's daily limit for the demo. The values go to psql
+  as variables, not into the SQL text.
+
+**Tests (DoD):**
+
+| Check | Result |
+|---|---|
+| First request of the day | succeeds; creates both usage rows; reservation expires +5 min |
+| 10 parallel reservations, limit $0.0027 (room for 3) | exactly 3 accepted, 7 refused |
+| Same, against a check-then-act mutation | 10 accepted ($0.0076, 2.8x the limit): the test catches it |
+| Reserved 23:59:59, released 00:00:30 (frozen clock) | released on the old day; the next reservation lands on the new day |
+| Retry-After at 22:30 CEST | 5,400 s, `resetsAt` = 22:00 UTC |
+| Global cap | the third user is refused with `scope: app`, nothing charged |
+| Crashed request | released by the sweep after 5 minutes, not at 4 |
+| Over the limit through `POST …/messages` | 429 + Retry-After, no AI call, no messages stored |
+| Answer streamed | reservation released, `reserved_usd` back to 0 |
+
+There are 8 new API DB tests (33 in total) and 4 new web tests (30 in total).
+
+**Verified live** (browser pane, real OpenAI, `make budget … USD=0.001`):
+1. First question: answered, $0.00034.
+2. Second question: 429. The answer slot says "Today's AI budget is used up." and the banner says
+   "New questions work again at 00:00 (in 13 h 59 min)". In the database: spent $0.000336,
+   reserved 0, one reservation (released), none for the refused request (0.000336 + 0.00076 >
+   0.001).
+3. Limit back to $0.25: the next question went through and the banner disappeared on `ack`.
+
+Two UI fixes came out of it:
+- The header showed a $0.001 limit as "$0.00"; small limits are now shown exactly.
+- Retry is hidden while the budget is used up, since it would only be refused again.
+
+**Surprises:**
+- **Released after the response ended:** the release first ran after `res.end()`, so a client
+  asking again right away could still see the held budget. The stream now ends only after the
+  message is stored and the budget released.
+- **The sweep is global:** it released reservations other tests had left open, so its test now
+  sweeps first and then measures.
+- **Another small-document miss:** "And are receipts required for the per diem?" retrieved only
+  handbook chunks and ended as `no_answer`, although the policies page that answered the previous
+  turn says so. This is the same W2 finding as the follow-up and mixed-document cases (rewrite,
+  per-document cap).
+- **Flaky CDK test:** under the parallel `make check`, the first CDK test (which synthesizes
+  every stack) once exceeded the 5-second timeout; alone it takes 2.6 s. Synthesis now runs once
+  in `beforeAll` with a 30-second budget.
+- **Test cap raised:** the Python DB tests bill real ledger rows into today's
+  `app_daily_usage` (about $0.02 a run), so the test app runs with a $1,000 global cap.
 

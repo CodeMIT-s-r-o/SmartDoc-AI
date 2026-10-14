@@ -19,6 +19,7 @@ import { ApiError } from '../api';
 import { openDocument } from '../documents/api';
 import { type ConversationDto, deleteConversation, listConversations } from './api';
 import { AssistantMessage } from './AssistantMessage';
+import { BudgetBanner } from './BudgetBanner';
 import { Composer } from './Composer';
 import { HistoryMenu } from './HistoryMenu';
 import { useChat } from './useChat';
@@ -169,7 +170,8 @@ export function ChatPanel({
               <AssistantMessage
                 key={item.key}
                 answer={item.answer}
-                canRetry={item.key === lastKey && !chat.running}
+                // Retrying while the budget is used up would only be refused again.
+                canRetry={item.key === lastKey && !chat.running && !chat.budget}
                 onRetry={() => {
                   stick.current = true;
                   chat.retry(item.question);
@@ -196,6 +198,7 @@ export function ChatPanel({
         </Stack>
       </Box>
       <Divider />
+      <BudgetBanner budget={chat.budget} />
       <Composer
         disabled={readyDocuments === 0}
         running={chat.running}

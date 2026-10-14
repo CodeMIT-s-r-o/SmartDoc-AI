@@ -5,7 +5,7 @@ import {
   type Source,
 } from '@smartdoc/contracts';
 import { EventSourceParserStream } from 'eventsource-parser/stream';
-import { api, ApiError } from '../api';
+import { api, ApiError, toApiError } from '../api';
 
 export type MessageStatus =
   'streaming' | 'complete' | 'aborted' | 'error' | 'no_answer' | 'cached' | 'degraded';
@@ -91,9 +91,7 @@ export async function streamMessage(
     signal,
   });
   if (!res.ok) {
-    const problem = (await res.json().catch(() => undefined)) as
-      { code?: string; detail?: string } | undefined;
-    throw new ApiError(res.status, problem?.code ?? 'UNKNOWN', problem?.detail ?? res.statusText);
+    throw await toApiError(res);
   }
   if (res.headers.get('content-type')?.includes('application/json')) {
     const replay = (await res.json()) as { assistantMessage: MessageDto };
@@ -126,6 +124,7 @@ const SEND_MESSAGES: Record<string, string> = {
   NO_DOCUMENTS: 'Upload a document and wait until it is ready before asking.',
   IN_PROGRESS: 'This question is still being answered. Try again in a moment.',
   RATE_LIMITED: 'Too many questions in a short time. Wait a minute and try again.',
+  BUDGET_EXCEEDED: "Today's AI budget is used up.",
   NOT_FOUND: 'This conversation no longer exists. Start a new chat.',
   VALIDATION_FAILED: 'Questions are limited to 2,000 characters.',
   UNAVAILABLE: 'The service is temporarily unavailable. Try again in a minute.',
@@ -136,4 +135,22 @@ export function sendErrorMessage(error: unknown): string {
     return SEND_MESSAGES[error.code] ?? error.message;
   }
   return 'Connection lost. Check your connection and try again.';
+}
+
+/** A refused send because a daily budget is used up (429 BUDGET_EXCEEDED). */
+export interface BudgetBlock {
+  scope: 'user' | 'app';
+  resetsAt: string;
+}
+
+export function budgetBlock(error: unknown): BudgetBlock | null {
+  if (!(error instanceof ApiError) || error.code !== 'BUDGET_EXCEEDED') {
+    return null;
+  }
+  const { scope, resetsAt } = error.problem;
+  return {
+    scope: scope === 'app' ? 'app' : 'user',
+    resetsAt:
+      typeof resetsAt === 'string' ? resetsAt : new Date(Date.now() + 3_600_000).toISOString(),
+  };
 }

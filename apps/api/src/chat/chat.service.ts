@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
+import { BudgetExceeded, BudgetService } from '../budget/budget.service.js';
 import { ProblemException } from '../common/problem.js';
 import {
   ConversationsRepository,
@@ -26,6 +27,7 @@ export class ChatService {
   constructor(
     private readonly repo: ConversationsRepository,
     private readonly ai: AiClient,
+    private readonly budget: BudgetService,
   ) {}
 
   /**
@@ -62,9 +64,12 @@ export class ChatService {
     }
 
     const requestId = randomUUID();
-    const history = await this.repo.history(conversationId, HISTORY_MESSAGES);
+    // The last check before the first byte: a refusal is still a plain 429 problem+json.
+    await this.reserveBudget(auth.tenantId, requestId);
+    let history: Awaited<ReturnType<ConversationsRepository['history']>>;
     let turn: { userMessageId: string; assistantMessageId: string };
     try {
+      history = await this.repo.history(conversationId, HISTORY_MESSAGES);
       turn = await this.repo.insertTurn({
         tenantId: auth.tenantId,
         conversationId,
@@ -73,6 +78,7 @@ export class ChatService {
         requestId,
       });
     } catch (error) {
+      await this.releaseBudget(requestId);
       if (error instanceof DuplicateClientMessage) {
         // A concurrent retry of the same send won the insert: behave as if it arrived first.
         const winner = await this.repo.findTurn(conversationId, body.clientMessageId);
@@ -83,20 +89,58 @@ export class ChatService {
       throw error;
     }
 
-    await this.stream(res, {
-      requestId,
-      conversationId,
-      assistantMessageId: turn.assistantMessageId,
-      userMessageId: turn.userMessageId,
-      aiRequest: {
+    try {
+      await this.stream(res, {
         requestId,
-        tenantId: auth.tenantId,
         conversationId,
-        question: body.content,
-        history: history.map((m) => ({ role: m.role, content: m.content })),
-        documentIds,
-      },
-    });
+        assistantMessageId: turn.assistantMessageId,
+        userMessageId: turn.userMessageId,
+        aiRequest: {
+          requestId,
+          tenantId: auth.tenantId,
+          conversationId,
+          question: body.content,
+          history: history.map((m) => ({ role: m.role, content: m.content })),
+          documentIds,
+        },
+      });
+    } finally {
+      // The AI service wrote its ledger rows before its stream ended, so spend is already
+      // counted; whatever the outcome, the estimate stops being held. Released before the
+      // response ends, so the client's next question already sees the freed budget.
+      await this.releaseBudget(requestId);
+      if (!res.writableEnded) {
+        res.end();
+      }
+    }
+  }
+
+  private async reserveBudget(tenantId: string, requestId: string): Promise<void> {
+    try {
+      await this.budget.reserve(tenantId, requestId);
+    } catch (error) {
+      if (!(error instanceof BudgetExceeded)) {
+        throw error;
+      }
+      throw new ProblemException(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'BUDGET_EXCEEDED',
+        error.scope === 'user'
+          ? "You have used today's AI budget. It resets at midnight (Europe/Bratislava)."
+          : "SmartDoc's daily AI budget is used up. It resets at midnight (Europe/Bratislava).",
+        { scope: error.scope, resetsAt: error.resetsAt.toISOString() },
+        { 'Retry-After': String(error.retryAfterS) },
+      );
+    }
+  }
+
+  /** Never fails the request: an unreleased reservation expires and the housekeeping tick frees it. */
+  private async releaseBudget(requestId: string): Promise<void> {
+    try {
+      await this.budget.release(requestId);
+    } catch (error) {
+      this.logger.warn(`request ${requestId}: budget release failed: ${String(error)}`);
+    }
   }
 
   /** The same clientMessageId again: never a second LLM call. */
@@ -166,9 +210,6 @@ export class ChatService {
       });
     }
     await this.finalize(turn.assistantMessageId, collector, clientGone);
-    if (!res.writableEnded) {
-      res.end();
-    }
   }
 
   private async finalize(

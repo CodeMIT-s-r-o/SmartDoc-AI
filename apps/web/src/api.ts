@@ -3,6 +3,8 @@ export interface Problem {
   status: number;
   code: string;
   detail: string;
+  /** Extension members, e.g. `scope` and `resetsAt` on BUDGET_EXCEEDED. */
+  [extension: string]: unknown;
 }
 
 export class ApiError extends Error {
@@ -10,14 +12,20 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     detail: string,
+    readonly problem: Partial<Problem> = {},
   ) {
     super(detail);
   }
 }
 
-async function toApiError(res: Response): Promise<ApiError> {
+export async function toApiError(res: Response): Promise<ApiError> {
   const problem = (await res.json().catch(() => undefined)) as Partial<Problem> | undefined;
-  return new ApiError(res.status, problem?.code ?? 'UNKNOWN', problem?.detail ?? res.statusText);
+  return new ApiError(
+    res.status,
+    problem?.code ?? 'UNKNOWN',
+    problem?.detail ?? res.statusText,
+    problem ?? {},
+  );
 }
 
 /** Same-origin API call with the caller's access token. */
