@@ -30,6 +30,9 @@ export default defineConfig({
       // The Python DB tests bill real ledger rows into today's app_daily_usage on every run.
       GLOBAL_DAILY_CAP_USD: '1000',
       AWS_REGION: 'eu-central-1',
+      // Presigning is local: fake keys sign upload policies without ever reaching AWS.
+      AWS_ACCESS_KEY_ID: 'AKIDTESTDBSPEC',
+      AWS_SECRET_ACCESS_KEY: 'test-secret-db-spec',
       S3_DOCS_BUCKET: 'smartdoc-test-docs',
     },
   },

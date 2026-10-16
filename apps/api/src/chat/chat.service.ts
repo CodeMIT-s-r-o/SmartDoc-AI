@@ -102,6 +102,7 @@ export class ChatService {
           question: body.content,
           history: history.map((m) => ({ role: m.role, content: m.content })),
           documentIds,
+          bypassCache: body.bypassCache ?? false,
         },
       });
     } finally {

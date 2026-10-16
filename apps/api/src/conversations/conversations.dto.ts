@@ -13,6 +13,8 @@ export const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(2000),
   /** Defaults to all of the caller's ready documents. */
   documentIds: z.array(z.uuid()).min(1).max(50).optional(),
+  /** Ask for a fresh answer instead of a cached one. */
+  bypassCache: z.boolean().optional(),
 });
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
 

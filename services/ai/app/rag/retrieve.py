@@ -8,6 +8,7 @@ reported as `fts_rank`, never as BM25.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from pgvector import HalfVector
@@ -49,19 +50,27 @@ class Retrieval:
 
 
 SCOPE = """
-SELECT id FROM documents
+SELECT id, ready_at FROM documents
  WHERE tenant_id = %(tenant)s AND id = ANY(%(docs)s) AND status = 'ready'
    FOR SHARE
 """
 
 
-async def verify_scope(conn: AsyncConnection, tenant: UUID, document_ids: Sequence[UUID]) -> None:
-    """Row locks keep a concurrent delete waiting until this retrieval commits."""
+async def verify_scope(
+    conn: AsyncConnection, tenant: UUID, document_ids: Sequence[UUID]
+) -> dict[UUID, datetime]:
+    """Row locks keep a concurrent delete waiting until this retrieval commits.
+
+    Returns each document's ready_at: a re-ingest moves it, which changes the cache scope.
+    """
     wanted = set(document_ids)
     cur = await conn.execute(SCOPE, {"tenant": tenant, "docs": list(wanted)})
-    found = {row[0] for row in await cur.fetchall()}
-    if found != wanted or not wanted:
-        raise ScopeMismatch(f"{len(wanted - found)} of {len(wanted)} documents are not in scope")
+    found: dict[UUID, datetime] = {row[0]: row[1] for row in await cur.fetchall()}
+    if set(found) != wanted or not wanted:
+        raise ScopeMismatch(
+            f"{len(wanted - set(found))} of {len(wanted)} documents are not in scope"
+        )
+    return found
 
 
 _Q = """

@@ -10,6 +10,11 @@ export const createDocumentSchema = z.object({
     .max(255)
     .regex(/\.pdf$/i, 'Only PDF files are supported'),
   sizeBytes: z.number().int().positive(),
+  /** Hex SHA-256 of the file (WebCrypto in the browser): dedup, and S3 verifies the upload. */
+  sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'Expected a lowercase hex SHA-256')
+    .optional(),
 });
 export type CreateDocumentBody = z.infer<typeof createDocumentSchema>;
 

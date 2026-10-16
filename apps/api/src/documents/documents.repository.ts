@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, count, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, ne, notInArray, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module.js';
-import { documents, ingestionJobs, messages } from '../db/schema.js';
+import { documents, ingestionJobs, messages, responseCache } from '../db/schema.js';
 
 export type DocumentRow = typeof documents.$inferSelect;
 
@@ -12,6 +12,7 @@ export interface NewDocument {
   originalFilename: string;
   s3Key: string;
   sizeBytes: number;
+  sha256?: string | null;
 }
 
 /** Every read and write is scoped by tenant; the only exception is the worker lookup. */
@@ -35,6 +36,21 @@ export class DocumentsRepository {
     if (!row) {
       throw new Error('insert returned no row');
     }
+    return row;
+  }
+
+  /** The tenant's live copy of these bytes (the same rows the dedup unique index covers). */
+  async findBySha256(tenantId: string, sha256: string): Promise<DocumentRow | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(documents)
+      .where(
+        and(
+          eq(documents.tenantId, tenantId),
+          eq(documents.sha256, sha256),
+          notInArray(documents.status, ['failed', 'deleting']),
+        ),
+      );
     return row;
   }
 
@@ -145,6 +161,8 @@ export class DocumentsRepository {
           ),
         );
       await tx.delete(documents).where(and(eq(documents.id, id), eq(documents.tenantId, tenantId)));
+      // Cached answers may quote the document's snippets; the cache refills on demand.
+      await tx.delete(responseCache).where(eq(responseCache.tenantId, tenantId));
     });
   }
 

@@ -35,6 +35,7 @@ class ChatBody(_Camel):
     question: str = Field(min_length=1, max_length=2000)
     history: list[HistoryTurnBody] = Field(default_factory=list, max_length=20)
     document_ids: list[UUID] = Field(min_length=1, max_length=50)
+    bypass_cache: bool = False
 
 
 def get_pipeline(request: Request) -> ChatPipeline:
@@ -54,6 +55,7 @@ async def chat(
         question=body.question,
         history=[HistoryTurn(t.role, t.content) for t in body.history],
         document_ids=body.document_ids,
+        bypass_cache=body.bypass_cache,
     )
     async for event in pipeline.run(req):
         yield ServerSentEvent(event=event.name, raw_data=event.json())

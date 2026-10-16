@@ -21,6 +21,9 @@ class Meta(_Camel):
     model: str
     prompt_version: str
     cache: Literal["miss", "exact"]
+    # The standalone question that drove retrieval, when a follow-up was rewritten. Omitted
+    # (never null) otherwise: the contract types it as optional.
+    rewritten_question: str | None = None
 
 
 class Source(_Camel):
@@ -80,7 +83,9 @@ class ChatEvent:
     def payload(self) -> Any:
         if isinstance(self.data, list):
             return [s.model_dump(mode="json", by_alias=True) for s in self.data]
-        return self.data.model_dump(mode="json", by_alias=True)
+        return self.data.model_dump(
+            mode="json", by_alias=True, exclude_none=isinstance(self.data, Meta)
+        )
 
     def json(self) -> str:
         return json.dumps(self.payload(), separators=(",", ":"), ensure_ascii=False)

@@ -17,6 +17,7 @@ import { type ChangeEvent, type DragEvent, useRef, useState } from 'react';
 import {
   deleteDocument,
   type DocumentDto,
+  isDuplicateUpload,
   MAX_UPLOAD_BYTES,
   openDocument,
   uploadDocument,
@@ -31,7 +32,7 @@ interface UploadProgress {
   fraction: number;
 }
 
-type Notice = { severity: 'success' | 'error'; message: string };
+type Notice = { severity: 'success' | 'info' | 'error'; message: string };
 
 const QUERY_KEY = ['documents'];
 
@@ -68,7 +69,10 @@ export function DocumentsPanel({
           setUploads((current) => current.map((u) => (u.key === key ? { ...u, fraction } : u))),
         );
       } catch (error) {
-        setNotice({ severity: 'error', message: `${file.name}: ${uploadErrorMessage(error)}` });
+        setNotice({
+          severity: isDuplicateUpload(error) ? 'info' : 'error',
+          message: `${file.name}: ${uploadErrorMessage(error)}`,
+        });
       } finally {
         setUploads((current) => current.filter((u) => u.key !== key));
         void refresh();

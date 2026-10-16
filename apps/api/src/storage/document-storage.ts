@@ -68,8 +68,19 @@ export class DocumentStorage {
    * Presigned POST, not PUT: only a POST policy can enforce the size range. The policy also pins
    * the exact key and the content type, and expires after 5 minutes.
    */
-  async createUploadPost(key: string): Promise<UploadPost> {
+  /**
+   * With `sha256` (hex), S3 hashes what arrives and rejects bytes that differ from the file the
+   * browser hashed, so the dedup key always describes the stored object.
+   */
+  async createUploadPost(key: string, sha256?: string): Promise<UploadPost> {
     this.assertCredentialsFresh();
+    const checksum: Record<string, string> = sha256
+      ? {
+          'x-amz-checksum-algorithm': 'SHA256',
+          'x-amz-checksum-sha256': Buffer.from(sha256, 'hex').toString('base64'),
+        }
+      : {};
+    // Every field is also an exact-match condition in the signed policy.
     const { url, fields } = await createPresignedPost(this.s3, {
       Bucket: this.bucket,
       Key: key,
@@ -77,7 +88,7 @@ export class DocumentStorage {
         ['content-length-range', 1, MAX_UPLOAD_BYTES],
         ['eq', '$Content-Type', PDF_CONTENT_TYPE],
       ],
-      Fields: { 'Content-Type': PDF_CONTENT_TYPE },
+      Fields: { 'Content-Type': PDF_CONTENT_TYPE, ...checksum },
       Expires: UPLOAD_TTL_S,
     });
     return { url, fields, expiresAt: expiresAt(UPLOAD_TTL_S) };

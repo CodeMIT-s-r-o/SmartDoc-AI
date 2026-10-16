@@ -1,6 +1,7 @@
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
+import { isUniqueViolation } from '../common/pg-errors.js';
 import { ProblemException } from '../common/problem.js';
 import {
   DocumentStorage,
@@ -20,6 +21,14 @@ import { type DocumentRow, DocumentsRepository } from './documents.repository.js
 
 export const DOCUMENT_QUOTA = 50;
 const PDF_MAGIC = '%PDF-';
+
+const duplicate = (existing: DocumentRow) =>
+  new ProblemException(
+    HttpStatus.CONFLICT,
+    'DUPLICATE_DOCUMENT',
+    `This file is already uploaded as “${existing.title}”`,
+    { existingDocumentId: existing.id },
+  );
 
 const notFound = () =>
   new ProblemException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Document not found');
@@ -47,6 +56,17 @@ export class DocumentsService {
         `PDFs are limited to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB`,
       );
     }
+    if (body.sha256) {
+      const existing = await this.repo.findBySha256(auth.tenantId, body.sha256);
+      if (existing?.status === 'uploading') {
+        // The same file, still waiting for its bytes: resume that upload, not a second copy.
+        const upload = await this.storage.createUploadPost(existing.s3Key, body.sha256);
+        return { document: toDocumentDto(existing), upload };
+      }
+      if (existing) {
+        throw duplicate(existing);
+      }
+    }
     if ((await this.repo.countActive(auth.tenantId)) >= DOCUMENT_QUOTA) {
       throw new ProblemException(
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -58,15 +78,29 @@ export class DocumentsService {
     const id = randomUUID();
     const s3Key = documentKey(auth.tenantId, id);
     // Presign first: if it fails (e.g. expired credentials) no orphan reservation is left behind.
-    const upload = await this.storage.createUploadPost(s3Key);
-    const row = await this.repo.insertUploading({
-      id,
-      tenantId: auth.tenantId,
-      title: titleFromFilename(body.filename),
-      originalFilename: body.filename,
-      s3Key,
-      sizeBytes: body.sizeBytes,
-    });
+    const upload = await this.storage.createUploadPost(s3Key, body.sha256);
+    let row: DocumentRow;
+    try {
+      row = await this.repo.insertUploading({
+        id,
+        tenantId: auth.tenantId,
+        title: titleFromFilename(body.filename),
+        originalFilename: body.filename,
+        s3Key,
+        sizeBytes: body.sizeBytes,
+        sha256: body.sha256 ?? null,
+      });
+    } catch (error) {
+      // Two uploads of the same file at once: the unique index lets exactly one through.
+      const winner =
+        body.sha256 && isUniqueViolation(error, 'documents_tenant_sha256_uq')
+          ? await this.repo.findBySha256(auth.tenantId, body.sha256)
+          : undefined;
+      if (winner) {
+        throw duplicate(winner);
+      }
+      throw error;
+    }
     return { document: toDocumentDto(row), upload };
   }
 

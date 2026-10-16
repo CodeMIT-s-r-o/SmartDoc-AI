@@ -30,6 +30,7 @@ export class FakeDocumentsRepository implements Pick<
     const now = new Date();
     const row: DocumentRow = {
       ...doc,
+      sha256: doc.sha256 ?? null,
       s3VersionId: null,
       status: 'uploading',
       errorCode: null,
@@ -46,6 +47,18 @@ export class FakeDocumentsRepository implements Pick<
     };
     this.rows.set(row.id, row);
     return Promise.resolve(row);
+  }
+
+  findBySha256(tenantId: string, sha256: string): Promise<DocumentRow | undefined> {
+    return Promise.resolve(
+      [...this.rows.values()].find(
+        (r) =>
+          r.tenantId === tenantId &&
+          r.sha256 === sha256 &&
+          r.status !== 'failed' &&
+          r.status !== 'deleting',
+      ),
+    );
   }
 
   findOwned(tenantId: string, id: string): Promise<DocumentRow | undefined> {

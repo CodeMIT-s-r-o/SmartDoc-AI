@@ -1,4 +1,4 @@
-"""One chat turn: embed -> verify scope + hybrid retrieval -> gate -> generate (streamed) -> ledger.
+"""One chat turn: scope -> rewrite -> cache -> embed -> retrieval -> gate -> generate -> ledger.
 
 Emits SSE events in contract order: meta, sources, token..., then exactly one of done / error.
 Failure policy (docs/IMPLEMENTATION_PLAN.md §2.3, §6):
@@ -7,6 +7,9 @@ Failure policy (docs/IMPLEMENTATION_PLAN.md §2.3, §6):
 - OpenAI fails mid-stream: an `error` event (retryable).
 - The client disconnects: the stream to OpenAI is closed and the call is recorded with estimated
   usage. Telemetry is written even then (shielded from cancellation).
+Cost: a follow-up is rewritten into a standalone question (one small call) so retrieval and the
+exact cache see what is really asked; a cache hit replays the stored answer without embedding or
+generating anything.
 """
 
 import asyncio
@@ -15,6 +18,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -25,6 +29,7 @@ from openai import AsyncOpenAI
 from psycopg_pool import AsyncConnectionPool
 
 from app.cost.ledger import record_llm_call
+from app.rag import cache
 from app.rag import events as ev
 from app.rag.breaker import CircuitBreaker
 from app.rag.citations import CitationReport, parse_citations
@@ -40,6 +45,7 @@ from app.rag.prompt import (
     prompt_cache_options,
 )
 from app.rag.retrieve import Retrieval, ScopeMismatch, gate_fires, retrieve, verify_scope
+from app.rag.rewrite import build_rewrite_input, clean_rewrite
 from app.rag.tokens import count_tokens
 
 log = logging.getLogger("chat")
@@ -48,6 +54,8 @@ log = logging.getLogger("chat")
 # degrade to keyword retrieval, and let the breaker stop calling during an outage.
 EMBED_TIMEOUT = openai.Timeout(5.0, connect=2.0)
 CHAT_TIMEOUT = openai.Timeout(60.0, connect=2.0)
+# The rewrite is also on the critical path, and optional: give up quickly and use the original.
+REWRITE_TIMEOUT = openai.Timeout(5.0, connect=2.0)
 FIRST_TOKEN_TIMEOUT_S = 20.0
 # Held back until we know whether the answer starts with the NO_ANSWER sentinel.
 SENTINEL_HOLDBACK_CHARS = 12
@@ -81,6 +89,7 @@ class ChatRequest:
     question: str
     history: list[HistoryTurn]
     document_ids: list[UUID]
+    bypass_cache: bool = False
 
 
 class _MidStreamFailure(Exception):
@@ -108,6 +117,13 @@ class _Run:
     ttft_ms: int | None = None
     llm_ms: int | None = None
     usage_estimated: bool = False
+    rewritten: bool = False
+    # Set when the result may be cached: (scope_hash, question_norm_hash) and the scope's documents.
+    cache_key: tuple[str, str] | None = None
+    scope: dict[UUID, datetime] = field(default_factory=dict)
+    answer: str = ""
+    sources: list[ev.Source] = field(default_factory=list)
+    cache_baseline: Decimal | None = None
 
     def elapsed_ms(self) -> int:
         return round((time.perf_counter() - self.started) * 1000)
@@ -145,6 +161,23 @@ class ChatPipeline:
     async def run(self, req: ChatRequest) -> AsyncIterator[ev.ChatEvent]:
         run = _Run()
         try:
+            run.scope = await self._verify_scope(req)
+            rewritten = await self._rewrite(req, run)
+            question = rewritten or req.question
+            run.rewritten = rewritten is not None
+            # Only a standalone question has a meaning of its own that an answer can be keyed on.
+            standalone = not req.history or run.rewritten
+            if self.config.exact_cache_enabled and not req.bypass_cache and standalone:
+                run.cache_key = (
+                    cache.scope_hash(self.config.config_hash(), PROMPT_VERSION, run.scope),
+                    cache.question_hash(question),
+                )
+            hit = await self._lookup(req, run)
+            if hit is not None:
+                async for event in self._serve_cached(req, run, hit, rewritten):
+                    yield event
+                return
+
             yield ev.ChatEvent(
                 "meta",
                 ev.Meta(
@@ -152,9 +185,10 @@ class ChatPipeline:
                     model=self.config.chat_model,
                     prompt_version=PROMPT_VERSION,
                     cache="miss",
+                    rewritten_question=rewritten,
                 ),
             )
-            query_vector = await self._embed_question(req, run)
+            query_vector = await self._embed_question(req, run, question)
 
             async with self.pool.connection() as conn, conn.transaction():
                 await verify_scope(conn, req.tenant_id, req.document_ids)
@@ -162,7 +196,7 @@ class ChatPipeline:
                     conn,
                     tenant=req.tenant_id,
                     document_ids=req.document_ids,
-                    question=req.question,
+                    question=question,
                     query_vector=query_vector,
                     config=self.config,
                 )
@@ -177,7 +211,8 @@ class ChatPipeline:
                 return
 
             run.context = assemble(retrieval.candidates, self.config)
-            yield ev.ChatEvent("sources", self._sources(run.context))
+            run.sources = self._sources(run.context)
+            yield ev.ChatEvent("sources", run.sources)
 
             if query_vector is None or not self.breaker.allow() or self.client is None:
                 run.status = "degraded"
@@ -220,7 +255,92 @@ class ChatPipeline:
 
     # --- steps -------------------------------------------------------------------------------
 
-    async def _embed_question(self, req: ChatRequest, run: _Run) -> list[float] | None:
+    async def _verify_scope(self, req: ChatRequest) -> dict[UUID, datetime]:
+        """Before anything is spent: the documents must be the tenant's and ready."""
+        async with self.pool.connection() as conn, conn.transaction():
+            return await verify_scope(conn, req.tenant_id, req.document_ids)
+
+    async def _rewrite(self, req: ChatRequest, run: _Run) -> str | None:
+        """A standalone version of a follow-up, or None (first turn, disabled, or it failed)."""
+        if not (self.config.rewrite_enabled and req.history and self.client is not None):
+            return None
+        if not self.breaker.allow():
+            return None
+        history = trim_history(
+            req.history, self.config.history_turns, self.config.history_token_budget
+        )
+        if not history:
+            return None
+        started = time.perf_counter()
+        try:
+            res = await self.client.with_options(
+                max_retries=0, timeout=REWRITE_TIMEOUT
+            ).responses.create(  # type: ignore[call-overload]
+                model=self.config.chat_model,
+                input=build_rewrite_input(history, req.question),
+                reasoning={"effort": "none"},
+                text={"verbosity": "low"},
+                max_output_tokens=self.config.rewrite_max_output_tokens,
+                store=False,
+                safety_identifier=hashlib.sha256(str(req.tenant_id).encode()).hexdigest()[:32],
+            )
+        except (*TRANSIENT, openai.APIError) as exc:
+            if isinstance(exc, TRANSIENT):
+                self.breaker.record_failure()
+            log.warning("request %s: rewrite failed (%s)", req.request_id, type(exc).__name__)
+            return None
+        self.breaker.record_success()
+        counts = _usage_counts(res.usage)
+        run.cost += await record_llm_call(
+            self.pool,
+            tenant_id=req.tenant_id,
+            purpose="rewrite",
+            model=self.config.chat_model,
+            response_model=res.model,
+            service_tier=res.service_tier or "default",
+            request_id=req.request_id,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            input_tokens=counts["input_tokens"],
+            cached_tokens=counts["cached_tokens"],
+            cache_write_tokens=counts["cache_write_tokens"],
+            output_tokens=counts["output_tokens"],
+            reasoning_tokens=counts["reasoning_tokens"],
+        )
+        return clean_rewrite(getattr(res, "output_text", None))
+
+    async def _lookup(self, req: ChatRequest, run: _Run) -> cache.CachedAnswer | None:
+        if run.cache_key is None:
+            return None
+        scope, question = run.cache_key
+        async with self.pool.connection() as conn:
+            return await cache.lookup(conn, req.tenant_id, scope, question)
+
+    async def _serve_cached(
+        self, req: ChatRequest, run: _Run, hit: cache.CachedAnswer, rewritten: str | None
+    ) -> AsyncIterator[ev.ChatEvent]:
+        """The stored answer, as one token: no embedding, no retrieval, no generation."""
+        run.status = "cached"
+        run.cache_baseline = hit.original_cost_usd
+        run.answer = hit.answer
+        run.sources = hit.sources
+        run.citations = parse_citations(hit.answer, len(hit.sources))
+        yield ev.ChatEvent(
+            "meta",
+            ev.Meta(
+                request_id=req.request_id,
+                model=self.config.chat_model,
+                prompt_version=PROMPT_VERSION,
+                cache="exact",
+                rewritten_question=rewritten,
+            ),
+        )
+        yield ev.ChatEvent("sources", hit.sources)
+        yield self._token(hit.answer)
+        yield self._done(run)
+
+    async def _embed_question(
+        self, req: ChatRequest, run: _Run, question: str
+    ) -> list[float] | None:
         """None means "no embeddings right now": retrieval falls back to keyword search."""
         if self.client is None or not self.breaker.allow():
             return None
@@ -230,7 +350,7 @@ class ChatPipeline:
                 max_retries=0, timeout=EMBED_TIMEOUT
             ).embeddings.create(
                 model=self.config.embedding_model,
-                input=req.question,
+                input=question,
                 dimensions=self.config.embedding_dimensions,
             )
         except TRANSIENT as exc:
@@ -349,6 +469,7 @@ class ChatPipeline:
             run.status = "no_answer_model"
         else:
             run.status = "answered"
+            run.answer = answer
             run.citations = parse_citations(answer, len(run.context))
 
         if completed is not None:
@@ -425,12 +546,12 @@ class ChatPipeline:
                 cur = await conn.execute(
                     """INSERT INTO rag_requests (
                            id, tenant_id, conversation_id, config, config_hash, prompt_version,
-                           model, response_model, service_tier, status, cache_type, max_cos,
-                           max_matched_lexemes, fts_nonempty, n_chunks, n_citations,
+                           model, response_model, service_tier, status, cache_type, rewritten,
+                           max_cos, max_matched_lexemes, fts_nonempty, n_chunks, n_citations,
                            citation_coverage, citations_valid, total_ms, retrieval_ms, ttft_ms,
                            llm_ms, cost_usd, usage_estimated)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'miss', %s, %s, %s, %s, %s,
-                               %s, %s, %s, %s, %s, %s, %s, %s)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                               %s, %s, %s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT (id) DO NOTHING""",
                     (
                         req.request_id,
@@ -443,10 +564,12 @@ class ChatPipeline:
                         run.response_model,
                         run.service_tier,
                         run.status,
+                        "exact" if run.status == "cached" else "miss",
+                        run.rewritten,
                         r.max_cos if r else None,
                         r.max_matched_lexemes if r else None,
                         r.fts_nonempty if r else None,
-                        len(run.context),
+                        len(run.context) or len(run.sources),
                         len(cited),
                         run.citations.coverage if run.citations else None,
                         run.citations.valid if run.citations else None,
@@ -479,8 +602,38 @@ class ChatPipeline:
                                 for rank, c in enumerate(r.candidates, start=1)
                             ],
                         )
+                if cur.rowcount == 1:
+                    await self._persist_cache(conn, req, run)
         except Exception:
             log.exception("request %s: could not persist telemetry", req.request_id)
+
+    async def _persist_cache(self, conn: Any, req: ChatRequest, run: _Run) -> None:
+        """A hit books its saving; a clean, standalone answer is stored for the next asker."""
+        if run.status == "cached" and run.cache_baseline is not None:
+            await cache.record_saving(
+                conn, req.request_id, "exact_cache", run.cache_baseline, run.cost
+            )
+            return
+        report = run.citations
+        if (
+            run.status == "answered"
+            and run.cache_key is not None
+            and not run.usage_estimated
+            and report is not None
+            and report.valid
+        ):
+            await cache.store(
+                conn,
+                tenant=req.tenant_id,
+                scope=run.cache_key[0],
+                question=run.cache_key[1],
+                documents=list(run.scope),
+                answer=run.answer,
+                sources=run.sources,
+                cited_sources=report.cited,
+                cost_usd=run.cost,
+                ttl_days=self.config.cache_ttl_days,
+            )
 
     # --- event helpers -----------------------------------------------------------------------
 
@@ -514,7 +667,9 @@ class ChatPipeline:
                 citations_valid=run.citations.valid if run.citations else True,
                 usage=run.usage,
                 cost_usd=float(run.cost),
-                saved_usd=0.0,
+                saved_usd=float(max(run.cache_baseline - run.cost, Decimal(0)))
+                if run.cache_baseline is not None
+                else 0.0,
                 latency_ms=ev.LatencyMs(
                     retrieval=run.retrieval_ms, ttft=run.ttft_ms, total=run.elapsed_ms()
                 ),

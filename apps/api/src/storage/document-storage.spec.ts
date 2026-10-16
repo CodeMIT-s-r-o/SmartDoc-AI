@@ -39,6 +39,26 @@ describe('DocumentStorage.createUploadPost', () => {
     expect(post.fields.key).toBe(key);
     expect(post.fields['Content-Type']).toBe('application/pdf');
   });
+
+  it("pins the browser's SHA-256, so S3 rejects bytes that differ from the hashed file", async () => {
+    // SHA-256 of the empty string, a well-known value: e3b0c442…b855 hex, 47DEQpj8…Uk= base64.
+    const sha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+    const post = await storage.createUploadPost(documentKey('tenant-1', 'doc-1'), sha256);
+
+    const policy = JSON.parse(Buffer.from(post.fields.Policy!, 'base64').toString('utf8')) as {
+      conditions: unknown[];
+    };
+    const base64 = '47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=';
+    expect(post.fields['x-amz-checksum-algorithm']).toBe('SHA256');
+    expect(post.fields['x-amz-checksum-sha256']).toBe(base64);
+    expect(policy.conditions).toEqual(
+      expect.arrayContaining([
+        { 'x-amz-checksum-algorithm': 'SHA256' },
+        { 'x-amz-checksum-sha256': base64 },
+      ]),
+    );
+  });
 });
 
 describe('DocumentStorage.presignGet', () => {

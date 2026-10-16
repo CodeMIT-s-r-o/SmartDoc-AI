@@ -55,9 +55,16 @@ function postForm(
   });
 }
 
+/** Hex SHA-256 of the file's bytes (WebCrypto); up to 20 MB takes well under a second. */
+export async function sha256Hex(file: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
  * Three steps: reserve the document, POST the file straight to S3 with the presigned policy,
- * then ask the API to validate what landed and queue ingestion.
+ * then ask the API to validate what landed and queue ingestion. The file's SHA-256 lets the API
+ * refuse a second copy (409 DUPLICATE_DOCUMENT) and lets S3 reject bytes that do not match.
  */
 export async function uploadDocument(
   token: string,
@@ -67,6 +74,7 @@ export async function uploadDocument(
   const { document, upload } = await api<CreateDocumentResponse>('POST', '/documents', token, {
     filename: file.name,
     sizeBytes: file.size,
+    sha256: await sha256Hex(file),
   });
 
   const form = new FormData();
@@ -78,9 +86,14 @@ export async function uploadDocument(
   if (s3.status >= 300) {
     // S3 answers policy violations with XML; the interesting part is the <Code>.
     const code = /<Code>([^<]+)<\/Code>/.exec(s3.body)?.[1] ?? `HTTP_${s3.status}`;
+    const mapped: Record<string, string> = {
+      EntityTooLarge: 'FILE_TOO_LARGE',
+      BadDigest: 'UPLOAD_CORRUPTED',
+      XAmzContentChecksumMismatch: 'UPLOAD_CORRUPTED',
+    };
     throw new ApiError(
       s3.status,
-      code === 'EntityTooLarge' ? 'FILE_TOO_LARGE' : 'UPLOAD_REJECTED',
+      mapped[code] ?? 'UPLOAD_REJECTED',
       `S3 rejected the upload (${code})`,
     );
   }
@@ -113,8 +126,14 @@ const UPLOAD_MESSAGES: Record<string, string> = {
   QUOTA_EXCEEDED: 'You have reached the limit of 50 documents.',
   RATE_LIMITED: 'Too many uploads. Try again later.',
   UPLOAD_REJECTED: 'The upload was rejected. Try again.',
+  UPLOAD_CORRUPTED: 'The file changed or was damaged on the way. Try again.',
+  DUPLICATE_DOCUMENT: 'This file is already in your documents.',
   UNAVAILABLE: 'The service is temporarily unavailable. Try again in a minute.',
 };
+
+/** Not a failure: the file is already there, so the upload has nothing to do. */
+export const isDuplicateUpload = (error: unknown): boolean =>
+  error instanceof ApiError && error.code === 'DUPLICATE_DOCUMENT';
 
 export function uploadErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {

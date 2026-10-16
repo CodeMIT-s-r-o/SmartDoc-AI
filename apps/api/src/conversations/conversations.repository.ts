@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { FeedbackRequest } from '@smartdoc/contracts';
 import { and, asc, desc, eq, inArray, lt, ne, sql } from 'drizzle-orm';
+import { isUniqueViolation } from '../common/pg-errors.js';
 import { DB, type Database } from '../db/db.module.js';
 import {
   type Citation,
@@ -33,11 +34,6 @@ const HISTORY_STATUSES: MessageStatus[] = ['complete', 'cached', 'no_answer'];
 const TITLE_CHARS = 80;
 
 export class DuplicateClientMessage extends Error {}
-
-const isUniqueViolation = (error: unknown): boolean => {
-  const code = (e: unknown) => (e as { code?: string } | undefined)?.code;
-  return code(error) === '23505' || code((error as { cause?: unknown }).cause) === '23505';
-};
 
 @Injectable()
 export class ConversationsRepository {

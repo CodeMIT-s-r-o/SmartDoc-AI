@@ -105,15 +105,20 @@ class FakeOpenAI:
         embed_error: Exception | None = None,
         chat_error: Exception | None = None,
         fail_mid_stream: bool = False,
+        rewrite: str = "",
+        rewrite_error: Exception | None = None,
     ) -> None:
         self.embed_calls = 0
+        self.embed_inputs: list[str] = []
         self.chat_calls: list[dict[str, Any]] = []
+        self.rewrite_calls: list[dict[str, Any]] = []
         self.streams: list[FakeStream] = []
         outer = self
 
         class Embeddings:
             async def create(self, **kwargs: Any) -> Any:
                 outer.embed_calls += 1
+                outer.embed_inputs.append(kwargs["input"])
                 if embed_error:
                     raise embed_error
                 return SimpleNamespace(
@@ -123,6 +128,19 @@ class FakeOpenAI:
 
         class Responses:
             async def create(self, **kwargs: Any) -> Any:
+                if not kwargs.get("stream"):  # the standalone rewrite
+                    outer.rewrite_calls.append(kwargs)
+                    if rewrite_error:
+                        raise rewrite_error
+                    usage = FakeUsage(
+                        input_tokens=300,
+                        input_tokens_details={"cached_tokens": 0},
+                        output_tokens=15,
+                        output_tokens_details={"reasoning_tokens": 0},
+                    )
+                    return SimpleNamespace(
+                        output_text=rewrite, model="gpt-6-luna", service_tier="default", usage=usage
+                    )
                 outer.chat_calls.append(kwargs)
                 if chat_error:
                     raise chat_error
@@ -181,7 +199,9 @@ async def seed(pool: AsyncConnectionPool, status: str = "ready") -> tuple[uuid.U
 
 
 def pipeline(pool: AsyncConnectionPool, client: FakeOpenAI | None, **config: Any) -> ChatPipeline:
-    return ChatPipeline(pool, client, CircuitBreaker(5, 60, 30), RagConfig(**config))  # type: ignore[arg-type]
+    """The pipeline these tests were written for: no standalone rewrite (test_answer_cache.py)."""
+    settings = {"rewrite_enabled": False, **config}
+    return ChatPipeline(pool, client, CircuitBreaker(5, 60, 30), RagConfig(**settings))  # type: ignore[arg-type]
 
 
 async def run(

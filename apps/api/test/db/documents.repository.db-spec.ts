@@ -97,7 +97,7 @@ describe.skipIf(!url)('DocumentsRepository (Postgres)', () => {
     expect(await repo.findForIngestion(stillUploading!.id)).toBeUndefined();
   });
 
-  it('purges a document: cascades chunks and jobs, redacts citation snippets, keeps the ledger', async () => {
+  it('purges a document: cascades chunks and jobs, redacts snippets, clears cached answers, keeps the ledger', async () => {
     const t = await tenant();
     const doc = await uploading(t);
     const other = await uploading(t);
@@ -137,6 +137,15 @@ describe.skipIf(!url)('DocumentsRepository (Postgres)', () => {
       })
       .returning();
 
+    const cacheEntry = (tenantId: string) => sql`
+      INSERT INTO response_cache (tenant_id, scope_hash, question_norm_hash, answer, sources,
+                                  cited_sources, original_cost_usd, expires_at)
+      VALUES (${tenantId}, 'scope', ${randomUUID()}, 'answer [1]', '[{"snippet":"secret text"}]',
+              '{1}', 0.0003, now() + interval '7 days')`;
+    const bystander = await tenant();
+    await db.execute(cacheEntry(t));
+    await db.execute(cacheEntry(bystander));
+
     expect(await repo.markDeleting(t, doc.id)).toBeDefined();
     expect(await repo.markDeleting(t, doc.id)).toBeUndefined();
     await repo.purge(t, doc.id);
@@ -159,6 +168,11 @@ describe.skipIf(!url)('DocumentsRepository (Postgres)', () => {
     expect(redacted).toMatchObject({ documentId: doc.id, title: 'Handbook', pageStart: 1 });
     expect(redacted).not.toHaveProperty('snippet');
     expect(kept).toMatchObject({ documentId: other.id, snippet: 'secret text' });
+    // Cached answers may quote the deleted document: the tenant's cache goes, nobody else's.
+    const cached = async (tenantId: string) =>
+      count(sql`SELECT count(*)::int AS n FROM response_cache WHERE tenant_id = ${tenantId}`);
+    expect(await cached(t)).toBe(0);
+    expect(await cached(bystander)).toBe(1);
   });
 
   it('never lets another tenant mark a document as deleting', async () => {

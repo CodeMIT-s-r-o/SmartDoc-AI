@@ -19,6 +19,7 @@ export type ErrorCode =
   | 'QUOTA_EXCEEDED'
   | 'RATE_LIMITED'
   | 'BUDGET_EXCEEDED'
+  | 'DUPLICATE_DOCUMENT'
   | 'UNAVAILABLE'
   | 'INTERNAL';
 

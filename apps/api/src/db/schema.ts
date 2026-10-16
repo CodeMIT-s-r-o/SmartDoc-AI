@@ -80,6 +80,8 @@ export const documents = pgTable(
     /** Pinned at /complete so the worker reads exactly the validated object version. */
     s3VersionId: text(),
     sizeBytes: bigint({ mode: 'number' }).notNull(),
+    /** Hex SHA-256 of the file, computed by the browser; S3 verifies it on upload. */
+    sha256: text(),
     status: text({ enum: DOCUMENT_STATUSES }).notNull().default('uploading'),
     errorCode: text(),
     errorMessage: text(),
@@ -95,7 +97,13 @@ export const documents = pgTable(
   },
   (t) => [
     index('documents_tenant_status_idx').on(t.tenantId, t.status),
+    // File-level dedup: the same bytes once per tenant, unless the earlier copy failed or is
+    // being deleted.
+    uniqueIndex('documents_tenant_sha256_uq')
+      .on(t.tenantId, t.sha256)
+      .where(sql`sha256 IS NOT NULL AND status NOT IN ('failed', 'deleting')`),
     check('documents_status_check', inList('status', DOCUMENT_STATUSES)),
+    check('documents_sha256_check', sql`sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'`),
   ],
 );
 
@@ -454,5 +462,61 @@ export const budgetReservations = pgTable(
       .on(t.expiresAt)
       .where(sql`released_at IS NULL`),
     check('budget_reservations_est_check', sql`est_usd > 0`),
+  ],
+);
+
+/**
+ * Exact answer cache. The key includes everything an answer depends on: the tenant, the scope
+ * (config hash, prompt version and every document's id:ready_at) and the normalized question, so a
+ * new or re-ingested document, a prompt change or another model is a miss by construction.
+ */
+export const responseCache = pgTable(
+  'response_cache',
+  {
+    id: bigint({ mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    tenantId: tenantId(),
+    scopeHash: text().notNull(),
+    questionNormHash: text().notNull(),
+    answer: text().notNull(),
+    /** The `sources` event as emitted (camelCase), replayed verbatim on a hit. */
+    sources: jsonb().notNull(),
+    citedSources: integer().array().notNull(),
+    /** What producing the answer cost: the baseline for the savings of every later hit. */
+    originalCostUsd: usd().notNull(),
+    hitCount: integer().notNull().default(0),
+    createdAt: createdAt(),
+    lastHitAt: timestamp({ withTimezone: true }),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex('response_cache_key_uq').on(t.tenantId, t.scopeHash, t.questionNormHash)],
+);
+
+export const SAVING_MECHANISMS = [
+  'exact_cache',
+  'prompt_cache',
+  'no_answer_gate',
+  'context_trim',
+  'embedding_dedup',
+] as const;
+
+/** Money not spent, per request and mechanism (the Cost page and the README savings rows). */
+export const costSavings = pgTable(
+  'cost_savings',
+  {
+    id: bigint({ mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    /** No FK: telemetry outlives the request rows it describes. */
+    requestId: uuid().notNull(),
+    mechanism: text({ enum: SAVING_MECHANISMS }).notNull(),
+    /** `estimated` from stored costs; `replay` from a measured counterfactual run. */
+    basis: text({ enum: ['estimated', 'replay'] }).notNull(),
+    baselineUsd: usd().notNull(),
+    actualUsd: usd().notNull(),
+    savedUsd: usd().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('cost_savings_mechanism_created_idx').on(t.mechanism, t.createdAt),
+    check('cost_savings_mechanism_check', inList('mechanism', SAVING_MECHANISMS)),
+    check('cost_savings_basis_check', sql`basis IN ('estimated', 'replay')`),
   ],
 );

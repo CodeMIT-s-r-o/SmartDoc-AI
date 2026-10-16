@@ -9,6 +9,8 @@ export interface AiChatRequest {
   question: string;
   history: { role: 'user' | 'assistant'; content: string }[];
   documentIds: string[];
+  /** Skip the exact answer cache (a fresh answer is wanted). */
+  bypassCache: boolean;
 }
 
 export class UpstreamUnavailable extends Error {}

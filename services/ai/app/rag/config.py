@@ -40,6 +40,11 @@ class RagConfig(BaseSettings):
 
     history_turns: int = 3
     history_token_budget: int = 800
+    # Follow-ups are rewritten into standalone questions for retrieval and the cache key.
+    rewrite_enabled: bool = True
+    rewrite_max_output_tokens: int = 120
+    exact_cache_enabled: bool = True
+    cache_ttl_days: int = 7
 
     breaker_failures: int = 5
     breaker_window_s: float = 60.0
