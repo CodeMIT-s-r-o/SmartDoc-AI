@@ -6,9 +6,11 @@ Invited users upload internal PDFs (manuals, policies) and chat with them. Answe
 and every user sees only their own documents. Every LLM token is accounted for, and every cost or quality claim is backed
 by a number the repo can reproduce.
 
-**Status:** Weekend 1 in progress. The local stack runs (`make up`) and the dev AWS resources (Cognito, S3) are
-deployed with CDK, but no product features exist yet. Progress is tracked in [docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan is in
-[docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
+**Status:** the MVP works end to end on the local stack (`make up`) against real dev AWS resources (Cognito, S3)
+deployed with CDK: upload, ingestion, streaming chat with page citations, cost per answer, feedback and per-user daily
+budgets. Weekend 2 is in progress: the answer cache, follow-up rewrite and upload dedup are being finished; AWS
+deployment and the eval harness come next. Not deployed yet, no other users. Progress and measurements:
+[docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan: [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
 The planned demo URL is https://smartdoc.codemit.sk.
 
 ---
@@ -27,18 +29,27 @@ SmartDoc AI is a portfolio project. It is built to be defended in a technical in
   - Retrieval metrics gate CI with zero API calls.
   - Generation and LLM-judge metrics run locally and are published with their caveats.
 
-## Features (planned)
+## Features
+
+**Working now** (verified on the local stack, see the build log):
 
 - Invite-only sign-in (Amazon Cognito managed login, OAuth code + PKCE).
-- PDF upload straight to S3 via presigned POST (≤ 20 MB). Asynchronous ingestion: parse → chunk → embed.
+- PDF upload straight to S3 via presigned POST (≤ 20 MB), validated server-side. Asynchronous ingestion in a worker:
+  sandboxed parse → chunk → embed, with retries and specific failure codes (no text layer, encrypted, parse limits).
 - Hybrid retrieval: pgvector HNSW and Postgres full-text search, fused with Reciprocal Rank Fusion.
-- Streaming answers (SSE) with numbered citations and "open PDF at page N".
-- Abstains when retrieval is weak, without calling the LLM.
-- Degraded mode: when OpenAI is unavailable, the app still returns the most relevant passages.
-- A cost badge on every answer, and thumbs up/down feedback.
-- An admin cost page: $/query, cache hit rates, spend by purpose, and a savings waterfall.
+- Streaming answers (SSE) with numbered citations, source snippets and "open PDF at page N".
+- Abstains when retrieval is weak, without calling the LLM, and when the model finds no answer in the passages.
+- Degraded mode: a circuit breaker returns the most relevant passages when OpenAI is unavailable.
+- A cost badge on every answer (from the ledger), thumbs up/down with reasons, conversation history.
+- Per-user and global daily budgets with reservations, 429 + `Retry-After` and a UI banner.
+
+**In progress:** exact answer cache, standalone rewrite of follow-up questions, file-level upload dedup.
+
+**Next:** AWS deployment and CI/CD, the eval harness, the cost replay and an admin cost page.
 
 ## Architecture
+
+The target production layout. Today the same containers run locally with Docker Compose.
 
 ```mermaid
 flowchart LR
@@ -99,26 +110,38 @@ Details: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §2 (request
 
 The RAG pipeline deliberately avoids framework chains and vector stores. Hybrid retrieval, caching and cost accounting are
 written directly against the schema, so each can be inspected, measured and explained.
-See [ADR-003 (planned)](docs/IMPLEMENTATION_PLAN.md#11-documentation-deliverables).
+See [ADR-003](docs/adr/003-thin-ai-stack.md).
 
 ## Cost controls
 
-| # | Mechanism | How it is measured |
-|---|---|---|
-| 1 | Reasoning and output controls (`effort: none`, low verbosity, output cap) | Reasoning/output token distributions; naive vs sensible replay delta |
-| 2 | Relevance gate: skip the LLM when nothing relevant is retrieved | Refusal accuracy and false-refusal rate next to the estimated savings |
-| 3 | Cache-aware prompt layout with one explicit breakpoint after a static prefix | Net savings from `cached_tokens` minus the cache-write premium |
-| 4 | Context budget: top-5 chunks, ≤ 2,000 tokens | Recall@k and faithfulness for k = 3, 5 and 8 |
-| 5 | History budget: last 3 turns, ≤ 800 tokens | Input tokens vs turn index |
-| 6 | Exact response cache, tenant-scoped, invalidated when documents change | Hit rate; savings curve across repeat ratios |
-| 7 | File-level dedup (SHA-256) | Embedding tokens saved |
-| 8 | Budgets: per-user daily cap, global daily cap, OpenAI project hard limits | 429 count; overshoot bounded by one reservation |
+| # | Mechanism | Status | How it is measured |
+|---|---|---|---|
+| 1 | Reasoning and output controls (`effort: none`, low verbosity, output cap) | done | Reasoning/output token distributions; naive vs sensible replay delta |
+| 2 | Relevance gate: skip the LLM when nothing relevant is retrieved | done | Refusal accuracy and false-refusal rate next to the estimated savings |
+| 3 | Cache-aware prompt layout with one explicit breakpoint after a static prefix | done | Net savings from `cached_tokens` minus the cache-write premium |
+| 4 | Context budget: top-5 chunks, ≤ 2,000 tokens | done | Recall@k and faithfulness for k = 3, 5 and 8 |
+| 5 | History budget: last 3 turns, ≤ 800 tokens | done | Input tokens vs turn index |
+| 6 | Exact response cache, tenant-scoped, invalidated when documents change | in progress | Hit rate; savings curve across repeat ratios |
+| 7 | File-level dedup (SHA-256) | in progress | Embedding tokens saved |
+| 8 | Budgets: per-user daily cap, global daily cap, OpenAI project hard limits | caps done; OpenAI limits pending | 429 count; overshoot bounded by one reservation |
 
 Savings are always reported in **absolute dollars next to percentages**. The replay traffic is labeled as synthetic.
 
 ## Results
 
-No results yet. The tables below are regenerated by `make eval-report` and are never edited by hand.
+**Measured so far** (single runs on the dev stack with real OpenAI, not eval results; details in the
+[build log](docs/BUILD_LOG.md)):
+
+| Measurement | Value |
+|---|---|
+| Answer with citations, prompt cache cold (prefix written) | $0.00038 |
+| Same, prompt cache warm (1,264-token prefix read at 10%) | $0.000056 |
+| Question refused by the relevance gate (no LLM call) | $0.00000016, 0.17 s |
+| Degraded answer once the circuit breaker is open | $0, 0.26 s |
+| Ingesting a 102-page PDF (214 chunks) | $0.0015 |
+| NestJS proxy overhead on time to first token | ~60 ms |
+
+No eval results yet. The tables below are regenerated by `make eval-report` and are never edited by hand.
 
 <!-- EVAL:START -->
 _No eval results yet._
@@ -146,7 +169,8 @@ _No eval results yet._
 - **Isolation:** every table is keyed by `tenant_id`, taken from the Cognito `sub`. Resources you do not own return 404. A generated IDOR test covers every `:id` route, and the AI service re-verifies document scope.
 - **Uploads:** S3 keys are built by the server, the POST policy enforces size and type, magic bytes are checked, and object versions are pinned.
 - **Prompt injection:** untrusted document text is escaped inside delimited tags, and the prompt includes an "untrusted data" rule. Output links are allowlisted and no remote images are rendered. Injection canaries are part of the eval.
-- **Infrastructure:** no static AWS keys (OIDC, instance role, SSO), no SSH (SSM Session Manager), IMDSv2, and an origin reachable only through CloudFront. Logs are redacted.
+- **Cost abuse:** per-user and global daily budgets with reservations, so parallel requests cannot overshoot by more than one reservation.
+- **Infrastructure (production design, Weekend 2):** no static AWS keys (OIDC, instance role, SSO), no SSH (SSM Session Manager), IMDSv2, an origin reachable only through CloudFront, and redacted logs.
 
 Full threat table: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §9.
 
@@ -200,21 +224,22 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
 
 - [ ] **Block 0.** Accounts, OpenAI API spike (streaming and prompt caching), toolchain.
   - [x] toolchain and monorepo scaffold (NestJS 12, Vite, FastAPI, Postgres + pgvector), `make up` healthy;
-  - [ ] OpenAI spike (script ready: `make spike`);
+  - [x] OpenAI spike (`make spike`);
   - [ ] accounts: OpenAI projects and limits, AWS eligibility check, corpus PDFs.
-- [ ] **Weekend 1: local MVP.**
+- [x] **Weekend 1: local MVP.**
   - compose stack and Drizzle schema;
   - Cognito auth;
   - presigned upload and the ingestion worker;
   - hybrid retrieval, streaming chat with citations, degraded mode;
   - chat UI.
-- [ ] **Weekend 2: production.**
-  - tenancy and IDOR tests;
-  - AWS deployment through CDK, and CI/CD;
-  - budgets, exact cache, dedup;
-  - eval harness and sweeps;
-  - cost replay and the Cost page;
-  - docs and a restore drill.
+- [ ] **Weekend 2: production** (in progress).
+  - [x] tenancy and IDOR tests;
+  - [ ] AWS deployment through CDK, and CI/CD;
+  - [x] budgets;
+  - [ ] exact cache, follow-up rewrite, dedup (in progress);
+  - [ ] eval harness and sweeps;
+  - [ ] cost replay and the Cost page;
+  - [ ] docs and a restore drill.
 - [ ] **Stretch.** Row-level security, semantic cache with a false-hit eval, reranking, promptfoo red-teaming, shared workspaces.
 
 ## Documentation
@@ -227,7 +252,7 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
 | [docs/planning/reviews/](docs/planning/reviews/) | Adversarial reviews: interviewer, security/correctness, feasibility/cost |
 | [docs/planning/draft-plan-v1.md](docs/planning/draft-plan-v1.md) | The draft plan as it stood before review |
 | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
-| [docs/adr/](docs/adr/) | Architecture decision records (5 of 10 so far) |
+| [docs/adr/](docs/adr/) | Architecture decision records (6 of 10 so far) |
 
 Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, the remaining ADRs and `docs/INTERVIEW.md`.
 
