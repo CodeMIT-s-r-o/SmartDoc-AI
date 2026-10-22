@@ -8,8 +8,8 @@ by a number the repo can reproduce.
 
 **Status:** the MVP works end to end on the local stack (`make up`) against real dev AWS resources (Cognito, S3)
 deployed with CDK: upload, ingestion, streaming chat with page citations, cost per answer, feedback and per-user daily
-budgets. Weekend 2 is in progress: the answer cache, follow-up rewrite and upload dedup are being finished; AWS
-deployment and the eval harness come next. Not deployed yet, no other users. Progress and measurements:
+budgets, an exact answer cache, standalone rewrite of follow-up questions and upload dedup. Next: the eval harness and
+calibration; AWS deployment is postponed until after them. Not deployed yet, no other users. Progress and measurements:
 [docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan: [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
 The planned demo URL is https://smartdoc.codemit.sk.
 
@@ -42,10 +42,11 @@ SmartDoc AI is a portfolio project. It is built to be defended in a technical in
 - Degraded mode: a circuit breaker returns the most relevant passages when OpenAI is unavailable.
 - A cost badge on every answer (from the ledger), thumbs up/down with reasons, conversation history.
 - Per-user and global daily budgets with reservations, 429 + `Retry-After` and a UI banner.
+- Exact answer cache: the same question over the same documents is answered once, then served at $0.
+- Follow-up questions ("and how many of them…") are rewritten into standalone questions for search.
+- Upload dedup: the browser's SHA-256 finds an existing copy (409), and S3 rejects bytes that do not match it.
 
-**In progress:** exact answer cache, standalone rewrite of follow-up questions, file-level upload dedup.
-
-**Next:** AWS deployment and CI/CD, the eval harness, the cost replay and an admin cost page.
+**Next:** the eval harness and calibration, then AWS deployment and CI/CD, the cost replay and an admin cost page.
 
 ## Architecture
 
@@ -121,8 +122,8 @@ See [ADR-003](docs/adr/003-thin-ai-stack.md).
 | 3 | Cache-aware prompt layout with one explicit breakpoint after a static prefix | done | Net savings from `cached_tokens` minus the cache-write premium |
 | 4 | Context budget: top-5 chunks, ≤ 2,000 tokens | done | Recall@k and faithfulness for k = 3, 5 and 8 |
 | 5 | History budget: last 3 turns, ≤ 800 tokens | done | Input tokens vs turn index |
-| 6 | Exact response cache, tenant-scoped, invalidated when documents change | in progress | Hit rate; savings curve across repeat ratios |
-| 7 | File-level dedup (SHA-256) | in progress | Embedding tokens saved |
+| 6 | Exact response cache, tenant-scoped, invalidated when documents change | done | Hit rate; savings curve across repeat ratios |
+| 7 | File-level dedup (SHA-256) | done | Embedding tokens saved |
 | 8 | Budgets: per-user daily cap, global daily cap, OpenAI project hard limits | caps done; OpenAI limits pending | 429 count; overshoot bounded by one reservation |
 
 Savings are always reported in **absolute dollars next to percentages**. The replay traffic is labeled as synthetic.
@@ -137,6 +138,8 @@ Savings are always reported in **absolute dollars next to percentages**. The rep
 | Answer with citations, prompt cache cold (prefix written) | $0.00038 |
 | Same, prompt cache warm (1,264-token prefix read at 10%) | $0.000056 |
 | Question refused by the relevance gate (no LLM call) | $0.00000016, 0.17 s |
+| Same question again, exact cache hit (no embedding, no LLM) | $0, 11 ms (first answer $0.00032, 5.3 s) |
+| Standalone rewrite of a follow-up question | $0.00003 |
 | Degraded answer once the circuit breaker is open | $0, 0.26 s |
 | Ingesting a 102-page PDF (214 chunks) | $0.0015 |
 | NestJS proxy overhead on time to first token | ~60 ms |
@@ -236,7 +239,7 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
   - [x] tenancy and IDOR tests;
   - [ ] AWS deployment through CDK, and CI/CD;
   - [x] budgets;
-  - [ ] exact cache, follow-up rewrite, dedup (in progress);
+  - [x] exact cache, follow-up rewrite, dedup;
   - [ ] eval harness and sweeps;
   - [ ] cost replay and the Cost page;
   - [ ] docs and a restore drill.

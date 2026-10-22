@@ -58,14 +58,14 @@ SELECT id, ready_at FROM documents
 
 async def verify_scope(
     conn: AsyncConnection, tenant: UUID, document_ids: Sequence[UUID]
-) -> dict[UUID, datetime]:
+) -> dict[UUID, datetime | None]:
     """Row locks keep a concurrent delete waiting until this retrieval commits.
 
     Returns each document's ready_at: a re-ingest moves it, which changes the cache scope.
     """
     wanted = set(document_ids)
     cur = await conn.execute(SCOPE, {"tenant": tenant, "docs": list(wanted)})
-    found: dict[UUID, datetime] = {row[0]: row[1] for row in await cur.fetchall()}
+    found: dict[UUID, datetime | None] = {row[0]: row[1] for row in await cur.fetchall()}
     if set(found) != wanted or not wanted:
         raise ScopeMismatch(
             f"{len(wanted - set(found))} of {len(wanted)} documents are not in scope"

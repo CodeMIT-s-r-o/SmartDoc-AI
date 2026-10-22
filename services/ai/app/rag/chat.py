@@ -120,7 +120,7 @@ class _Run:
     rewritten: bool = False
     # Set when the result may be cached: (scope_hash, question_norm_hash) and the scope's documents.
     cache_key: tuple[str, str] | None = None
-    scope: dict[UUID, datetime] = field(default_factory=dict)
+    scope: dict[UUID, datetime | None] = field(default_factory=dict)
     answer: str = ""
     sources: list[ev.Source] = field(default_factory=list)
     cache_baseline: Decimal | None = None
@@ -255,7 +255,7 @@ class ChatPipeline:
 
     # --- steps -------------------------------------------------------------------------------
 
-    async def _verify_scope(self, req: ChatRequest) -> dict[UUID, datetime]:
+    async def _verify_scope(self, req: ChatRequest) -> dict[UUID, datetime | None]:
         """Before anything is spent: the documents must be the tenant's and ready."""
         async with self.pool.connection() as conn, conn.transaction():
             return await verify_scope(conn, req.tenant_id, req.document_ids)

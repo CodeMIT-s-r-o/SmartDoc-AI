@@ -36,8 +36,14 @@ def question_hash(question: str) -> str:
     return hashlib.sha256(normalize_question(question).encode()).hexdigest()
 
 
-def scope_hash(config_hash: str, prompt_version: str, documents: Mapping[UUID, datetime]) -> str:
-    docs = sorted(f"{doc}:{ready_at.isoformat()}" for doc, ready_at in documents.items())
+def scope_hash(
+    config_hash: str, prompt_version: str, documents: Mapping[UUID, datetime | None]
+) -> str:
+    # ready_at is set when ingestion finishes, but the column is nullable (rows inserted by hand,
+    # fixtures): render NULL as "-", so a later re-ingest that sets it still changes the scope.
+    docs = sorted(
+        f"{doc}:{ready_at.isoformat() if ready_at else '-'}" for doc, ready_at in documents.items()
+    )
     return hashlib.sha256("|".join([config_hash, prompt_version, *docs]).encode()).hexdigest()
 
 

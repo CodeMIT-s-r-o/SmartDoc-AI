@@ -89,21 +89,15 @@ async def test_with_the_llm_down_it_returns_the_most_relevant_passages(
     assert "25 days of paid annual leave" in sources[0]["snippet"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap, described in the post (BUILD_LOG 2026-09-29): a follow-up is searched as "
-        "typed, without the conversation. When query rewriting lands this starts passing, and "
-        "strict=True turns that into a failure, so remove the marker and update the post."
-    ),
-)
 async def test_a_follow_up_is_searched_with_the_question_it_means(
     pool: AsyncConnectionPool,
 ) -> None:
-    """ "'And how many of them can I carry over?' found nothing useful, because search ran on
-    the literal follow-up instead of the question it meant." """
+    """The post's known gap ("'And how many of them can I carry over?' found nothing useful,
+    because search ran on the literal follow-up"), closed in Block 2.5 by the standalone rewrite,
+    which the production config enables. The fake rewrite stands in for the model; the live
+    check with the real model is in BUILD_LOG (Block 2.5)."""
     tenant, doc = await seed(pool)
-    fake = FakeOpenAI()
+    fake = FakeOpenAI(rewrite="How many annual leave days can I carry over to next year?")
     searched: list[str] = []
     embed = fake.embeddings.create
 
@@ -124,7 +118,7 @@ async def test_a_follow_up_is_searched_with_the_question_it_means(
         [doc],
     )
 
-    _ = [event async for event in pipeline(pool, fake).run(req)]
+    _ = [event async for event in pipeline(pool, fake, rewrite_enabled=True).run(req)]
 
     assert searched, "the question should have been embedded for search"
     assert "leave" in searched[0].lower(), f"searched for {searched[0]!r} alone"

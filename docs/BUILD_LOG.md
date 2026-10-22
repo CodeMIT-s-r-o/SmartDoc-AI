@@ -20,6 +20,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 1.9 Chat UI (stream, citations, open PDF p. N, cost badge, thumbs) | 3 h | 1.0 h | done, **MVP gate passed** | see 2026-09-29 (Block 1.9) |
 | 2.1 Generated IDOR test, ledger formula tests | 1 h | 0.5 h | done (scope hash moves to 2.5) | see 2026-10-01 (Block 2.1) |
 | 2.4 Budgets: reservations, release, sweeper, 429 + banner | 1 h | 0.9 h | done | see 2026-10-05 (Block 2.4), ADR-008 |
+| 2.5 Exact cache, scope hash, savings, rewrite, upload dedup | 2 h | 1.5 h | done (rewrite pulled in from cut-if-behind) | see 2026-10-22 (Block 2.5), ADR-005 |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -522,4 +523,66 @@ Two UI fixes came out of it:
   in `beforeAll` with a 30-second budget.
 - **Test cap raised:** the Python DB tests bill real ledger rows into today's
   `app_daily_usage` (about $0.02 a run), so the test app runs with a $1,000 global cap.
+
+## 2026-10-22: Block 2.5 (answer cache, follow-up rewrite, upload dedup)
+
+**Result:** the decisions are in [ADR-005](adr/005-gate-and-answer-cache.md).
+- **Exact answer cache** (Python):
+  - Key: tenant, scope hash and normalized question. The scope hash covers config, prompt
+    version and `document_id:ready_at`.
+  - A hit replays the stored answer and sources without any OpenAI call and books a
+    `cost_savings` row.
+  - Only clean answers to standalone questions are stored, for 7 days, behind a guarded insert.
+  - Deleting a document clears the tenant's cache; `bypassCache` skips the cache.
+- **Standalone rewrite** of follow-ups, for retrieval and the cache key. Pulled in from the
+  "cut if behind" list because the follow-up miss was seen live three times.
+- **Upload dedup:**
+  - The browser sends a WebCrypto SHA-256. A live copy gives 409 `DUPLICATE_DOCUMENT`, shown as
+    information, not as an error; an unfinished upload of the same file is resumed instead of
+    duplicated.
+  - A unique index settles concurrent uploads.
+  - The presigned POST pins the checksum, so S3 verifies the bytes.
+- **Migration 0003:** `response_cache`, `cost_savings`, `documents.sha256` (unique per tenant
+  among live rows).
+
+**Verified live** (real OpenAI, through `/internal/chat`):
+
+| Request | Result | Cost | Time |
+|---|---|---|---|
+| "What is the daily meal allowance…" | answered | $0.00031576 | 5.3 s |
+| Same question, other case and spacing | **cache hit**, no `llm_calls` row, `cost_savings` $0.00031576 | $0 | 11 ms |
+| "And how many of them can I carry over to next year?" | rewritten to "How many of my 25 paid annual leave days can I carry over to the next year?" → "up to 5 unused days… [4]" | $0.00027682 | 3.1 s |
+| "And are receipts required for the per diem?" | rewritten → "Receipts are not required for the per diem [1]" | $0.00025874 | 2.9 s |
+
+Both follow-ups had ended as `no_answer` before (1.8 and the 2.4 live check). A rewrite is
+cheap (183–184 input tokens, 19–23 output tokens, about $0.00003), but **slow: 1.4–1.6 s**,
+about half of a follow-up's time.
+
+**S3 checksum (an unverified assumption in the plan):** a policy pinned to the SHA-256 of file A,
+then a POST of different bytes of the same length gives **400 `BadDigest`**. File A itself
+gives 204. The probe object was deleted.
+
+**Tests:**
+- Python: 8 new DB tests (48 in total) for cache hit, misses after a new upload or a re-ingest,
+  what is not cached, rewrite and its fallback, and post claims; 6 new unit tests for key
+  normalization, scope hash and rewrite escaping.
+- API: 4 new DB tests for dedup (resume, 409, per tenant, failed copy, concurrent sends, bad
+  hash) and 3 for the post's budget claims, with cache clearing added to the purge test (40 in
+  total); a checksum policy unit test.
+- Web: 2 new tests for SHA-256 test vectors and duplicate handling.
+
+**Surprises:**
+- **`ready_at` can be NULL on a ready document** (fixtures, rows inserted by hand), and the scope
+  hash crashed on it. The WIP commit recorded 3 failing Python DB tests. NULL is now part of the
+  scope (`-`), and the types say so.
+- **The post-claims follow-up test was `xfail(strict)`** by design ("search runs on the literal
+  follow-up"). It now runs on the production config with the rewrite on and passes. The sentence
+  in the published post is outdated.
+- **Port clashes:** another local project (`randevu`) holds 5432 and 8000. `DB_PORT` already
+  existed; the AI service's host port is now `AI_PORT` too. Run with
+  `DB_PORT=5433 AI_PORT=8001 make up` while both run.
+- **Disk:** the disk filled up (325 MB free) and Docker Desktop stopped; after a cleanup, 12 GB
+  were free.
+- **A one-off 501** from `GET /api/health` in the parallel `make check` (alone, 3 of 3 passes).
+  Recorded as a flake to watch.
 

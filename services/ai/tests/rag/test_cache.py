@@ -31,3 +31,10 @@ def test_scope_ignores_order_but_not_documents_config_or_prompt() -> None:
     assert scope_hash("cfg", "v1", {A: READY, B: READY + timedelta(seconds=1)}) != base  # re-ingest
     assert scope_hash("cfg2", "v1", {A: READY, B: READY}) != base  # another model or retrieval
     assert scope_hash("cfg", "v2", {A: READY, B: READY}) != base  # another prompt
+
+
+def test_a_document_without_ready_at_has_a_stable_scope_that_a_reingest_changes() -> None:
+    unset = scope_hash("cfg", "v1", {A: None})
+
+    assert scope_hash("cfg", "v1", {A: None}) == unset
+    assert scope_hash("cfg", "v1", {A: READY}) != unset
