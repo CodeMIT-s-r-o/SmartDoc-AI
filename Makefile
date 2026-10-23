@@ -5,7 +5,7 @@ AWS_ADMIN_PROFILE ?= codemit
 DEV_APP_PROFILE ?= smartdoc-dev-app
 DEV_STACKS := SmartDoc-Dev-Storage SmartDoc-Dev-Auth
 
-.PHONY: eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
+.PHONY: hooks secrets eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
 	cdk-bootstrap cdk-diff-dev cdk-dev dev-config creds invite login-url
 
 help: ## List targets
@@ -34,6 +34,12 @@ logs: ## Follow logs of all services
 
 ps: ## Show service status
 	$(COMPOSE) ps
+
+hooks: ## Use the repository's git hooks (gitleaks on every commit)
+	git config core.hooksPath .githooks
+
+secrets: ## Scan the whole git history for secrets (gitleaks, values redacted)
+	gitleaks git --redact --no-banner .
 
 lint: ## Lint TypeScript and Python
 	yarn lint && yarn format:check

@@ -1,0 +1,5 @@
+# Reviewed false positives (gitleaks fingerprints: [commit:]file:rule:line).
+# quality-obs.md:312 describes the OpenAI Costs API: the word "key" followed by a query
+# parameter name looks like a generic API key to gitleaks. No secret is there.
+77dfa5f70aea9c363a88820d63a5948e8566471f:docs/planning/research/quality-obs.md:generic-api-key:312
+docs/planning/research/quality-obs.md:generic-api-key:312
