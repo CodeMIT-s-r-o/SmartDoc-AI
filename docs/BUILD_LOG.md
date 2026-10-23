@@ -21,6 +21,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 2.1 Generated IDOR test, ledger formula tests | 1 h | 0.5 h | done (scope hash moves to 2.5) | see 2026-10-01 (Block 2.1) |
 | 2.4 Budgets: reservations, release, sweeper, 429 + banner | 1 h | 0.9 h | done | see 2026-10-05 (Block 2.4), ADR-008 |
 | 2.5 Exact cache, scope hash, savings, rewrite, upload dedup | 2 h | 1.5 h | done (rewrite pulled in from cut-if-behind) | see 2026-10-22 (Block 2.5), ADR-005 |
+| 2.6 Eval corpus, datasets, harness (tiers 1-2), CI fixture | 2.5 h | 2.5 h | in progress: golden review pending | see 2026-10-23 (Block 2.6) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -585,4 +586,80 @@ gives 204. The probe object was deleted.
   were free.
 - **A one-off 501** from `GET /api/health` in the parallel `make check` (alone, 3 of 3 passes).
   Recorded as a flake to watch.
+
+## 2026-10-23: Block 2.6 (eval corpus and harness), in progress
+
+**Corpus:** five Slovak acts in English translation (`eval/corpus/`, not committed; manifest
+with SHA-256, `make corpus-check`):
+- the Labour Code (as effective on 17 April 2025) and the travel allowances act (1 January
+  2025), both via ILO NATLEX;
+- the data protection, cybersecurity and OSH acts.
+
+§ 5 b) of the Slovak Copyright Act excludes legal texts and their translations from copyright.
+The plan's US documents were swapped for Slovak law at the user's request; a Slovak-language
+corpus was rejected because Postgres 18 has no Slovak (or Czech) stemmer (checked in the
+container) and the embeddings are weaker for Slovak.
+
+**Harness** (`services/ai/evals/`, data in `eval/`):
+- **Ingest through the real worker:** `process_job` gained a pluggable document source, so
+  the corpus goes through the sandboxed parse, chunking, embedding with ledger rows and the
+  fenced finalize, with bytes from disk.
+- **Three tenants:**
+  - eval-main: the acts;
+  - eval-other: a generated "Northwind" handbook for cross-tenant probes;
+  - eval-canary: 12 generated injection documents (4 classes × 3: direct, delimiter
+    breakout, title and bookmark metadata, link and image exfiltration), so they never
+    pollute the golden metrics.
+- **Corpus size:** 18 documents, 1,002 chunks, 247k tokens, $0.0054 to embed.
+- **Datasets:**
+  - golden_v1: 30 generated items (24 single-hop, 6 multi-hop; evidence must be verbatim or
+    the item is dropped) and 10 hand-written ones (5 plausible-but-absent, 2 cross-tenant,
+    3 follow-ups), with quotes checked against the text;
+  - retrieval_synth_v1: 150 items;
+  - canaries_v1: 12 items.
+
+  Generation: 202 calls, $0.0195, booked in the eval ledger.
+- **`make golden-review`:** a local page with each item next to the cited PDF page. Accept,
+  fix or reject is written straight into the dataset, and a fix keeps the generated original.
+- **`make eval`:**
+  - tier 1: Hit/Recall@3/5/8, MRR, gate refusal, 100 cross-tenant probes;
+  - tier 2: live pipeline with the cache bypassed, giving citation precision, refusal and false
+    refusal, injection success with a Wilson interval, cost and latency;
+  - each result file is stamped (git SHA, config hash, dataset hashes, response model) and
+    checked against `eval/thresholds.yaml`.
+- **Pre-registration:** `eval/claims.yaml` was written before any official run.
+- **`make eval-ci`:** a fresh database, migrations, the committed fixture
+  (`eval_corpus.dump`, 6.9 MB, and question embeddings in half precision, 0.9 MB) and tier 1
+  with **no API call**, exactly as CI will run it.
+
+**Dry run on unreviewed items** (not results; the official baseline waits for the review):
+
+| Metric | Value | Note |
+|---|---|---|
+| Golden Hit@5 / MRR | 0.83 / 0.54 | right passage found, often not first |
+| Synthetic Hit@5 / MRR | 0.83 / 0.64 | |
+| Gate refusals (retrieval level) | **0 of 7** | legal text shares 2+ words with almost any question: calibration in 2.7 |
+| Cross-tenant | 100 probes, 0 leaks | |
+| Citation precision | 0.82 | |
+| Injection success | **0 of 12** (95 % CI up to 24 %) | 11 of 12 canary questions still answered correctly |
+| Refusals / false refusals | 6 of 7 / 7 of 33 | the false refusals are mostly multi-hop items and weak generated questions |
+| Follow-ups | 3 of 3 answered via the rewrite | |
+| Cost, latency | $0.00021 per query, p50 1.5 s, p95 2.7 s | |
+
+**Findings and fixes:**
+- **Ligatures and legal sections:** the parser now handles both (commit 5234da9).
+- **Nondeterministic retrieval (fixed):** the keyword branch ranked ties in `ts_rank_cd`
+  without a tie-breaker, so ranks, and which rows the `LIMIT` kept, depended on the physical
+  row order. A database restored from the fixture gave different metrics (golden Hit@5 0.80 vs
+  0.83). With `id` as the tie-breaker in both branches, the dev database and a fresh restore
+  give identical numbers.
+- **Clipped source print:** in the NATLEX print of the travel allowances act, deeply indented
+  paragraphs are clipped at the right margin ("colle" for "collective"). Recorded as a known
+  defect in the manifest.
+- **Status-based refusal is stricter than reality:** for the meal allowance question, the
+  model said the documents do not state the rate (correct, no invented amount), but without the
+  NO_ANSWER sentinel, so it counts as answered.
+- **Memory pressure:** swap is 8.7 of 9.2 GB used, with another project's stack running.
+  This explains the sporadic timeouts in the parallel `make check` (health, CDK and documents
+  e2e tests pass alone).
 

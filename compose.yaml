@@ -36,7 +36,7 @@ services:
     command: ['yarn', 'db:migrate']
     environment:
       # The dev app database and the test database (make test-db).
-      MIGRATE_DATABASE_URL: postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc,postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc_test
+      MIGRATE_DATABASE_URL: postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc,postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc_test,postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/smartdoc_eval
     volumes:
       - ./apps/api/src:/app/apps/api/src
       - ./apps/api/drizzle:/app/apps/api/drizzle

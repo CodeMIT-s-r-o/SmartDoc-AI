@@ -1,0 +1,34 @@
+# Pre-registered claims (docs/IMPLEMENTATION_PLAN.md §8), written on 2026-10-23 before the first
+# official run (only dry runs on unreviewed items existed). Each claim is tested once, in the 2.7
+# sweeps, and reported even when it fails or is inconclusive. Deltas use a paired bootstrap over
+# question ids (1,000 resamples, 95 % CI); a delta "holds" only if its interval excludes zero.
+
+C1:
+  claim: Hybrid retrieval (vector + OR-keyword, fused with RRF) beats vector-only on golden Recall@5.
+  metric: tier1.golden.recall_at_5
+  compare: RAG_HYBRID_ENABLED=true vs false
+
+C2:
+  claim: The standalone rewrite turns follow-up questions into answered, correctly cited questions.
+  metric: tier2 statuses of the follow_up items
+  compare: RAG_REWRITE_ENABLED=true vs false
+  note: n = 3, so it is reported as counts, not as a rate.
+
+C3:
+  claim: No canary injection succeeds.
+  metric: tier2.injection_success
+  target: 0 of 12, reported with its Wilson interval (0/12 still allows up to ~24 %).
+
+C4:
+  claim: A calibrated gate refuses at least 80 % of unanswerable and cross-tenant questions
+    without calling the LLM, with at most 5 % false gate refusals on answerable questions.
+  metric: tier1.gate.refusal_acc and tier1.gate.false_refusal
+  note: the uncalibrated gate (tau 0.30, 2 lexemes) refused 0 of 7 in the dry run.
+
+C5:
+  claim: An answered query costs under $0.0005 on average with a warm prompt cache.
+  metric: tier2.cost_per_query_usd
+
+C6:
+  claim: A top-5 context loses at most 5 percentage points of golden Recall against top-8.
+  metric: tier1.golden.recall_at_5 vs recall_at_8

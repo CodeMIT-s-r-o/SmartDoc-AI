@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Golden set review</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2129; --muted:#5f6673; --line:#dde1e7; --accent:#3f51b5;
+          --ok:#2e7d32; --edit:#b26a00; --bad:#c62828; --pending:#6b7280; --quote:#eef1f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#101218; --card:#181b23; --text:#e6e8ee; --muted:#9aa1ad; --line:#2a2f3a; --accent:#8c9eff;
+            --ok:#66bb6a; --edit:#ffb74d; --bad:#ef5350; --pending:#9aa1ad; --quote:#222734; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  header { position:sticky; top:0; z-index:2; background:var(--card); border-bottom:1px solid var(--line);
+           padding:10px 16px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; }
+  .tabs button, .filters button { border:1px solid var(--line); background:transparent; color:var(--text);
+           padding:4px 10px; border-radius:6px; cursor:pointer; }
+  .tabs button.on, .filters button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .progress { flex:1; min-width:160px; }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .bar span { display:block; height:100%; background:var(--ok); }
+  main { display:grid; grid-template-columns:minmax(380px, 1fr) minmax(420px, 1.1fr); gap:16px; padding:16px; }
+  #list { display:flex; flex-direction:column; gap:12px; }
+  .help { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; color:var(--muted); }
+  .help b { color:var(--text); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; cursor:pointer; }
+  .card.sel { outline:2px solid var(--accent); }
+  .meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+  .badge { border-radius:999px; padding:1px 8px; font-weight:600; font-size:11px; border:1px solid currentColor; }
+  .s-pending { color:var(--pending); } .s-accepted, .s-spot_ok { color:var(--ok); }
+  .s-edited { color:var(--edit); } .s-rejected, .s-spot_bad { color:var(--bad); }
+  label { display:block; font-size:12px; color:var(--muted); margin-top:8px; }
+  textarea, input { width:100%; font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line);
+           border-radius:6px; padding:6px 8px; }
+  textarea { resize:vertical; }
+  .ev { background:var(--quote); border-radius:8px; padding:8px 10px; margin-top:8px; }
+  .ev .src { font-size:12px; color:var(--muted); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .ev input { width:60px; padding:2px 6px; }
+  .ev blockquote { margin:6px 0 0; font-style:italic; }
+  .history { font-size:13px; color:var(--muted); border-left:3px solid var(--line); padding-left:8px; margin-top:6px; }
+  .actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .actions button { border:0; border-radius:6px; padding:6px 12px; color:#fff; font-weight:600; cursor:pointer; }
+  .b-ok { background:var(--ok); } .b-edit { background:var(--edit); } .b-bad { background:var(--bad); }
+  .b-link { background:transparent !important; color:var(--accent) !important; border:1px solid var(--line) !important; }
+  #viewer { position:sticky; top:68px; height:calc(100vh - 84px); display:flex; flex-direction:column; gap:8px; }
+  #viewer .bar2 { display:flex; gap:8px; align-items:center; color:var(--muted); font-size:12px; }
+  #viewer select { font:inherit; color:var(--text); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px; }
+  iframe { flex:1; width:100%; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  .saved { color:var(--ok); font-size:12px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } #viewer { position:static; height:70vh; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Golden set review</h1>
+  <div class="tabs"><button data-tab="golden" class="on">Golden (40)</button><button data-tab="synth">Synthetic spot check (20)</button></div>
+  <div class="filters"><button data-f="all" class="on">All</button><button data-f="pending">Pending</button><button data-f="done">Done</button></div>
+  <div class="progress"><div id="count">…</div><div class="bar"><span id="fill" style="width:0"></span></div></div>
+</header>
+<main>
+  <section id="list"></section>
+  <aside id="viewer">
+    <div class="bar2">PDF <select id="doc"></select> page <input id="page" type="number" min="1" style="width:70px"> <span>Use ⌘F in the viewer to search.</span></div>
+    <iframe id="pdf" title="Cited PDF page"></iframe>
+  </aside>
+</main>
+<script>
+const state = { tab: "golden", filter: "all", data: { golden: [], synth: [] }, sel: null };
+const DOCS = ["sk-labour-code-311-2001.pdf", "sk-travel-allowances-283-2002.pdf", "sk-data-protection-act-18-2018.pdf",
+              "sk-cybersecurity-act-69-2018.pdf", "sk-osh-act-124-2006.pdf"];
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const done = (r) => !["pending", "unreviewed", undefined].includes(r.review?.status);
+
+function show(doc, page) {
+  if (!doc) return;
+  $("#doc").value = doc; $("#page").value = page;
+  $("#pdf").src = `/pdf/${doc}#page=${page}`;
+}
+
+function help() {
+  return state.tab === "golden"
+    ? `<div class="help"><b>Accept</b> when the question is clear and realistic, the answer is fully supported by the quote, and the quote is on the cited page.
+       <b>Fix and save</b> when a small edit makes it right (question, answer or pages). <b>Reject</b> when it is wrong, ambiguous or trivial.
+       For <b>refuse</b> items, check with ⌘F in the viewer that the fact really is not in the documents.
+       Keys: <b>j/k</b> next/previous, <b>a</b> accept, <b>e</b> save edits, <b>r</b> reject.</div>`
+    : `<div class="help">Spot check: is the question sensible, and does the cited page answer it? <b>OK</b> or <b>Bad</b>. Keys: j/k, a (OK), r (Bad).</div>`;
+}
+
+function card(r) {
+  const st = r.review?.status ?? "pending";
+  const refuse = r.expected === "refuse";
+  const evidence = r.evidence ?? (r.gold ? [r.gold] : []);
+  const hist = (r.history ?? []).map((h) => `<div><b>${h.role}:</b> ${esc(h.content)}</div>`).join("");
+  const evs = evidence.map((e, i) => `
+    <div class="ev"><div class="src">${esc(e.title)} · ${esc(e.section ?? "")} · pages
+      <input data-p="${i}-0" type="number" value="${e.pages[0]}"> – <input data-p="${i}-1" type="number" value="${e.pages[1]}">
+      <button class="b-link" data-show="${i}">Show page</button></div>
+      <blockquote>“${esc(e.quote)}”</blockquote></div>`).join("");
+  const golden = state.tab === "golden";
+  return `<div class="card ${state.sel === r.id ? "sel" : ""}" data-id="${r.id}">
+    <div class="meta"><b>${r.id}</b><span>${esc(r.type ?? "synthetic")}</span>${golden ? `<span>expected: ${r.expected}</span>` : ""}
+      <span class="badge s-${st}">${st.replace("_", " ")}</span><span class="saved" data-saved></span></div>
+    ${hist ? `<div class="history">${hist}</div>` : ""}
+    <label>Question</label><textarea data-f="question" rows="2" ${golden ? "" : "readonly"}>${esc(r.question)}</textarea>
+    ${golden ? `<label>${refuse ? "Why it must be refused" : "Answer"}</label><textarea data-f="answer" rows="${refuse ? 2 : 3}">${esc(r.answer)}</textarea>` : ""}
+    ${evs || (refuse ? `<div class="ev"><div class="src">No evidence: the answer must not be in the corpus.</div></div>` : "")}
+    ${golden ? `<label>Notes</label><input data-f="notes" value="${esc(r.review?.notes ?? "")}">` : ""}
+    <div class="actions">${golden
+      ? `<button class="b-ok" data-act="accepted">Accept</button><button class="b-edit" data-act="edited">Fix and save</button><button class="b-bad" data-act="rejected">Reject</button>`
+      : `<button class="b-ok" data-act="spot_ok">OK</button><button class="b-bad" data-act="spot_bad">Bad</button>`}</div>
+  </div>`;
+}
+
+function render() {
+  const rows = state.data[state.tab].filter((r) => state.filter === "all" || (state.filter === "done") === done(r));
+  $("#list").innerHTML = help() + rows.map(card).join("");
+  const all = state.data[state.tab]; const n = all.filter(done).length;
+  $("#count").textContent = `${n} / ${all.length} reviewed`;
+  $("#fill").style.width = `${(100 * n) / Math.max(all.length, 1)}%`;
+}
+
+function select(id, scroll) {
+  state.sel = id;
+  document.querySelectorAll(".card").forEach((c) => c.classList.toggle("sel", c.dataset.id === id));
+  const r = state.data[state.tab].find((x) => x.id === id);
+  const e = (r.evidence ?? (r.gold ? [r.gold] : []))[0];
+  if (e) show(e.document, e.pages[0]);
+  if (scroll) document.querySelector(`.card[data-id="${id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+async function decide(el, status) {
+  const id = el.dataset.id;
+  const body = { dataset: state.tab, id, status, notes: $('[data-f="notes"]', el)?.value ?? "", edits: {} };
+  for (const f of ["question", "answer"]) { const t = $(`[data-f="${f}"]`, el); if (t && !t.readOnly) body.edits[f] = t.value; }
+  const p0 = $('[data-p="0-0"]', el), p1 = $('[data-p="0-1"]', el);
+  if (p0 && p1) body.pages = [Number(p0.value), Number(p1.value)];
+  const res = await fetch("/api/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) { alert(`Save failed: ${await res.text()}`); return; }
+  const row = await res.json();
+  const list = state.data[state.tab]; list[list.findIndex((r) => r.id === id)] = row;
+  render(); select(id, false);
+  const next = list.find((r) => !done(r));
+  if (next) select(next.id, true);
+}
+
+document.addEventListener("click", (ev) => {
+  const t = ev.target;
+  if (t.dataset.tab) { state.tab = t.dataset.tab; state.sel = null; document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b === t)); render(); return; }
+  if (t.dataset.f && t.closest(".filters")) { state.filter = t.dataset.f; document.querySelectorAll(".filters button").forEach((b) => b.classList.toggle("on", b === t)); render(); return; }
+  const el = t.closest(".card"); if (!el) return;
+  if (t.dataset.act) { decide(el, t.dataset.act); return; }
+  if (t.dataset.show) { const i = t.dataset.show; show(state.data[state.tab].find((r) => r.id === el.dataset.id).evidence?.[i]?.document
+      ?? state.data[state.tab].find((r) => r.id === el.dataset.id).gold.document, Number($(`[data-p="${i}-0"]`, el).value)); return; }
+  if (state.sel !== el.dataset.id && !["TEXTAREA", "INPUT"].includes(t.tagName)) select(el.dataset.id, false);
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (["TEXTAREA", "INPUT"].includes(ev.target.tagName)) return;
+  const ids = [...document.querySelectorAll(".card")].map((c) => c.dataset.id);
+  const i = ids.indexOf(state.sel);
+  if (ev.key === "j" && ids.length) select(ids[Math.min(i + 1, ids.length - 1)], true);
+  if (ev.key === "k" && ids.length) select(ids[Math.max(i - 1, 0)], true);
+  const el = document.querySelector(`.card[data-id="${state.sel}"]`); if (!el) return;
+  const golden = state.tab === "golden";
+  if (ev.key === "a") decide(el, golden ? "accepted" : "spot_ok");
+  if (ev.key === "e" && golden) decide(el, "edited");
+  if (ev.key === "r") decide(el, golden ? "rejected" : "spot_bad");
+});
+
+$("#doc").innerHTML = DOCS.map((d) => `<option>${d}</option>`).join("");
+$("#doc").addEventListener("change", () => show($("#doc").value, 1));
+$("#page").addEventListener("change", () => show($("#doc").value, Number($("#page").value)));
+fetch("/api/items").then((r) => r.json()).then((d) => { state.data = d; render(); const first = d.golden.find((r) => !done(r)) ?? d.golden[0]; if (first) select(first.id, false); });
+</script>
+</body>
+</html>

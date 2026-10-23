@@ -31,3 +31,9 @@ __pycache__/
 
 # AWS CDK (cdk.context.json is committed on purpose: it pins AMI lookups)
 cdk.out/
+
+# Written by the eval harness (cross-tenant and canary PDFs)
+eval/generated/
+
+# Dry runs on unreviewed golden items stay local
+eval/results/*-pending.json

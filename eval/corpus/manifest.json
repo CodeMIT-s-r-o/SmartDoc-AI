@@ -28,7 +28,8 @@
       "topics": ["business trips", "meal allowance", "reimbursement of expenses", "receipts"],
       "pages": 65,
       "bytes": 1653516,
-      "sha256": "1a311771216809dc9caa1212cd3f7d55c953073af194842c2c394193a8d13d02"
+      "sha256": "1a311771216809dc9caa1212cd3f7d55c953073af194842c2c394193a8d13d02",
+      "known_defects": "Some deeply indented paragraphs are clipped at the right margin in the source print (e.g. 'colle' for 'collective'); a few percent of lines lose their last characters."
     },
     {
       "file": "sk-data-protection-act-18-2018.pdf",

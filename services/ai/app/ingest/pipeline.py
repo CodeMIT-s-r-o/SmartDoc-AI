@@ -1,6 +1,7 @@
 """One ingestion job: download -> parse (sandboxed) -> chunk -> embed -> index."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -33,9 +34,21 @@ class WorkerDeps:
     internal_token: str
 
 
-async def process_job(deps: WorkerDeps, job: jobs.ClaimedJob) -> jobs.IndexedDocument:
+# Where a job's PDF bytes come from: the API's presigned S3 URL in the worker, a local file in the
+# eval harness (evals/ingest.py), so both run the same parse -> chunk -> embed -> index code.
+DocumentSource = Callable[[jobs.ClaimedJob], Awaitable[bytes]]
+
+
+async def process_job(
+    deps: WorkerDeps, job: jobs.ClaimedJob, source: DocumentSource | None = None
+) -> jobs.IndexedDocument:
     await jobs.set_stage(deps.pool, job, "downloading")
-    data = await download_document(deps.http, deps.api_url, deps.internal_token, job.document_id)
+    if source is None:
+        data = await download_document(
+            deps.http, deps.api_url, deps.internal_token, job.document_id
+        )
+    else:
+        data = await source(job)
 
     await jobs.set_stage(deps.pool, job, "parsing")
     parsed = await asyncio.to_thread(run_limited, parse_pdf, data)

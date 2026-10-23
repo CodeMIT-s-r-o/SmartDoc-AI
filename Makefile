@@ -5,7 +5,7 @@ AWS_ADMIN_PROFILE ?= codemit
 DEV_APP_PROFILE ?= smartdoc-dev-app
 DEV_STACKS := SmartDoc-Dev-Storage SmartDoc-Dev-Auth
 
-.PHONY: help install up down reset-db logs ps lint typecheck test test-db check format spike \
+.PHONY: eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
 	cdk-bootstrap cdk-diff-dev cdk-dev dev-config creds invite login-url
 
 help: ## List targets
@@ -62,6 +62,28 @@ format: ## Auto-format TypeScript and Python
 
 corpus-check: ## Verify the hand-downloaded eval corpus against eval/corpus/manifest.json
 	python3 services/ai/scripts/check_corpus.py eval/corpus
+
+eval-ingest: .env ## Ingest the eval corpus into smartdoc_eval through the real worker code (~$0.01)
+	cd services/ai && uv run python -m evals.ingest
+
+eval-generate: .env ## Generate golden/retrieval candidates from the eval corpus (~$0.02; overwrites them)
+	cd services/ai && uv run python -m evals.generate
+
+eval: .env ## Run the eval: retrieval metrics plus live LLM answers (~$0.02); writes eval/results/
+	cd services/ai && uv run python -m evals.run $(ARGS)
+
+eval-retrieval: ## Retrieval metrics only, from the cached question embeddings (no API calls)
+	cd services/ai && uv run python -m evals.run --offline $(ARGS)
+
+eval-fixture: ## Dump the ingested eval corpus to eval/fixtures (after the corpus or ingest changed)
+	docker compose exec -T db pg_dump -U smartdoc_owner -d smartdoc_eval -Fc -Z 9 --data-only \
+	  -t users -t documents -t chunks > eval/fixtures/eval_corpus.dump
+
+eval-ci: ## Tier-1 eval as CI runs it: fresh database + committed fixture, no API calls
+	scripts/eval-ci.sh $(ARGS)
+
+golden-review: ## Review golden candidates next to the cited PDF pages: http://127.0.0.1:8766
+	cd services/ai && uv run python -m evals.review
 
 spike: .env ## Block 0 OpenAI spike: streaming, prompt cache, temperature, Flex (< $0.01)
 	cd services/ai && uv run --env-file ../../.env python scripts/spike_openai.py

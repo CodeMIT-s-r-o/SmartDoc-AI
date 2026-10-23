@@ -87,7 +87,7 @@ sem_raw AS (
      ORDER BY embedding <=> %(vec)s
      LIMIT %(n)s
 ),
-sem AS (SELECT id, 1 - dist AS cos, row_number() OVER (ORDER BY dist) AS r FROM sem_raw)"""
+sem AS (SELECT id, 1 - dist AS cos, row_number() OVER (ORDER BY dist, id) AS r FROM sem_raw)"""
 
 _NO_SEM = """
 sem AS (SELECT NULL::uuid AS id, NULL::float8 AS cos, NULL::bigint AS r WHERE false)"""
@@ -98,10 +98,12 @@ kw AS (
            ts_rank_cd(c.tsv, q.tsq) AS fts,
            cardinality(ARRAY(SELECT unnest(tsvector_to_array(c.tsv))
                              INTERSECT SELECT unnest(q.lex))) AS matched,
-           row_number() OVER (ORDER BY ts_rank_cd(c.tsv, q.tsq) DESC) AS r
+           -- Ties are common in ts_rank_cd; break them by id, or the ranks (and which rows the
+           -- LIMIT keeps) depend on the physical row order, e.g. after a restore.
+           row_number() OVER (ORDER BY ts_rank_cd(c.tsv, q.tsq) DESC, c.id) AS r
       FROM chunks c, q
      WHERE c.tenant_id = %(tenant)s AND c.document_id = ANY(%(docs)s) AND c.tsv @@ q.tsq
-     ORDER BY fts DESC
+     ORDER BY fts DESC, c.id
      LIMIT %(n)s
 )"""
 
