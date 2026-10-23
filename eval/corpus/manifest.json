@@ -1,0 +1,67 @@
+{
+  "description": "Eval corpus: Slovak acts in English translation. The PDFs are downloaded by hand (README.md) and not committed; make corpus-check verifies them against these hashes.",
+  "retrieved": "2026-10-23",
+  "documents": [
+    {
+      "file": "sk-labour-code-311-2001.pdf",
+      "title": "Act No. 311/2001 Coll., Labour Code",
+      "version": "effective from 2025-04-17",
+      "translation": "unofficial English translation (Slov-Lex)",
+      "source": "https://natlex.ilo.org/dyn/natlex2/r/natlex/fe/details?p3_isn=61871",
+      "topics": [
+        "leave",
+        "working time",
+        "telework",
+        "maternity and parental leave",
+        "termination"
+      ],
+      "pages": 147,
+      "bytes": 4752745,
+      "sha256": "8a51bf3805c7b3f3d4eb4b1b2a4170e5d2c9cc318ff2e4e81021986e2be067c0"
+    },
+    {
+      "file": "sk-travel-allowances-283-2002.pdf",
+      "title": "Act No. 283/2002 Coll. on travel allowances",
+      "version": "effective from 2025-01-01",
+      "translation": "unofficial English translation (Slov-Lex)",
+      "source": "https://natlex.ilo.org/dyn/natlex2/r/natlex/fe/details?p3_isn=62145",
+      "topics": ["business trips", "meal allowance", "reimbursement of expenses", "receipts"],
+      "pages": 65,
+      "bytes": 1653516,
+      "sha256": "1a311771216809dc9caa1212cd3f7d55c953073af194842c2c394193a8d13d02"
+    },
+    {
+      "file": "sk-data-protection-act-18-2018.pdf",
+      "title": "Act No. 18/2018 Coll. on personal data protection",
+      "version": "as adopted on 2017-11-29 (file dated 2019-10-03)",
+      "translation": "English version, not legally binding (Office for Personal Data Protection of the Slovak Republic)",
+      "source": "https://dataprotection.gov.sk/files/personal-data-sample/2019_10_03_act_18_2018_on_personal_data_protection_and_amending_and_supplementing_certain_acts.pdf",
+      "topics": ["personal data", "data subject rights", "controller and processor duties"],
+      "pages": 95,
+      "bytes": 787647,
+      "sha256": "4d79139a6075c05de2256c83882dd4e73bbf580ab7749d153be8cbd23a79d0f7"
+    },
+    {
+      "file": "sk-cybersecurity-act-69-2018.pdf",
+      "title": "Act No. 69/2018 Coll. on Cybersecurity",
+      "version": "original 2018 wording, before the NIS 2 amendment (Act No. 366/2024 Coll.)",
+      "translation": "English version (SK-CERT, National Security Authority)",
+      "source": "https://www.sk-cert.sk/wp-content/uploads/2018/03/2018_69-Act-on-Cybersecurity.pdf",
+      "topics": ["security incidents", "reporting duties", "security measures"],
+      "pages": 39,
+      "bytes": 388554,
+      "sha256": "a65e4e31bfa99449d12b3698e4d895c63fd486972e79b5d9165b65a715043b53"
+    },
+    {
+      "file": "sk-osh-act-124-2006.pdf",
+      "title": "Act No. 124/2006 Coll. on occupational health and safety",
+      "version": "effective from 2022-01-01",
+      "translation": "English version (National Labour Inspectorate)",
+      "source": "https://www.ip.gov.sk/files/en/legislation/sk-legislation/legislation/act-no-124_2006-effect-from-01-01-2022.pdf",
+      "topics": ["employer duties", "employee duties", "risk assessment", "work accidents"],
+      "pages": 62,
+      "bytes": 885361,
+      "sha256": "553a5ec71c4e675a7475bc0b0974649ed9f13b201cf4256b1ab6e1a3ff24d87f"
+    }
+  ]
+}

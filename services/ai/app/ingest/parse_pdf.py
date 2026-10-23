@@ -31,6 +31,13 @@ PAGE_SEPARATOR = "\n\n"
 MAX_HEADING_CHARS = 200
 # Numbered headings ("4.2 Annual leave", "Article 5 ...", "§ 3 ..."), used when there is no outline.
 HEADING = re.compile(r"^(?P<num>\d+(?:\.\d+)*\.?|Article \d+|§\s?\d+)\s+\S.{0,80}$")
+# Legal acts: a section marker alone on its line ("Section 5", "§ 52a", "Article 4"), or with its
+# title on the same line ("§ 5 Meals"). The title of a bare marker is on the next line ("Section 5"
+# then "Definitions") or, in Slov-Lex prints, on the line before ("Scope of the Labor Code", "§ 1").
+LEGAL_MARKER = re.compile(r"^(?:Section|Article|§)\s?\d+[a-z]{0,2}\.?$")
+LEGAL_HEADING = re.compile(r"^(?:Section|Article|§)\s?\d+[a-z]{0,2}\s+[A-Z][^.;:,]{0,100}$")
+# Below this many markers a document is not treated as a legal act.
+MIN_LEGAL_SECTIONS = 5
 
 
 @dataclass(frozen=True)
@@ -68,7 +75,11 @@ def parse_pdf(data: bytes, max_pages: int = MAX_PAGES, max_chars: int = MAX_CHAR
         offset += len(page) + len(PAGE_SEPARATOR)
     text = PAGE_SEPARATOR.join(pages)
 
-    sections = _outline_sections(reader, pages, page_starts) or _numbered_sections(text)
+    sections = (
+        _outline_sections(reader, pages, page_starts)
+        or _legal_sections(text)
+        or _numbered_sections(text)
+    )
     return ParsedPdf(text=text, page_starts=page_starts, sections=sections, page_count=page_count)
 
 
@@ -125,6 +136,12 @@ def _decode_content_streams(page: PageObject) -> None:
         stream.get_object().get_data()
 
 
+# Typographic ligatures (U+FB00-FB06) split words for full-text search and embeddings:
+# "eﬀective" never matches "effective". Only these are decomposed, not all of NFKC, which
+# would also flatten superscript footnote markers ("Act¹") into the word.
+_LIGATURES = str.maketrans(
+    {chr(c): unicodedata.normalize("NFKC", chr(c)) for c in range(0xFB00, 0xFB07)}
+)
 _DIGITS = re.compile(r"\d+")
 _SPACES = re.compile("[ \t\u00a0]+")
 _HYPHENATED = re.compile(r"(\w)-\n(\w)")
@@ -146,8 +163,11 @@ def _edge_indexes(lines: list[str]) -> set[int]:
 
 
 def clean_pages(pages: list[str]) -> list[str]:
-    """Drop running headers/footers, join hyphenated words, collapse whitespace."""
-    split = [[_SPACES.sub(" ", line).strip() for line in page.splitlines()] for page in pages]
+    """Drop running headers/footers, join hyphenated words, collapse whitespace, split ligatures."""
+    split = [
+        [_SPACES.sub(" ", line).strip() for line in page.translate(_LIGATURES).splitlines()]
+        for page in pages
+    ]
 
     repeated: set[str] = set()
     if len(pages) >= 3:
@@ -210,6 +230,45 @@ def _walk_outline(
             last = [*parents, title]
             out.append((last, reader.get_destination_page_number(item)))
     return out
+
+
+def _title_like(line: str) -> bool:
+    """A heading title: short, capitalized, not a paragraph number and not a sentence end."""
+    return (
+        0 < len(line) <= 100
+        and line[0].isupper()
+        and not LEGAL_MARKER.match(line)
+        and not line.endswith((".", ",", ";", ":"))
+    )
+
+
+def _legal_sections(text: str) -> list[Section]:
+    """Sections of a legal act; [] when the text has too few markers to be one.
+
+    Only section markers count, so enumerated items ("1. the controller", "2. Electronic") never
+    become headings, as they do with the generic numbered fallback.
+    """
+    lines = text.splitlines(keepends=True)
+    stripped = [line.strip() for line in lines]
+    sections: list[Section] = []
+    offset = 0
+    for i, line in enumerate(stripped):
+        heading = None
+        if LEGAL_HEADING.match(line):
+            heading = line
+        elif LEGAL_MARKER.match(line):
+            after = next((s for s in stripped[i + 1 : i + 3] if s), "")
+            before = next((s for s in reversed(stripped[max(i - 2, 0) : i]) if s), "")
+            if _title_like(after):
+                heading = f"{line} {after}"
+            elif _title_like(before):
+                heading = f"{line} {before}"
+            else:
+                heading = line
+        if heading:
+            sections.append(Section(path=_safe_heading(heading.rstrip(".")), start=offset))
+        offset += len(lines[i])
+    return sections if len(sections) >= MIN_LEGAL_SECTIONS else []
 
 
 def _numbered_sections(text: str) -> list[Section]:

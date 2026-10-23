@@ -1,0 +1,3 @@
+# The corpus PDFs are downloaded by hand (see README.md here) and never committed:
+# the repo keeps their sources, versions and SHA-256 hashes in manifest.json instead.
+*.pdf

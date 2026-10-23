@@ -60,6 +60,9 @@ format: ## Auto-format TypeScript and Python
 	yarn format
 	cd services/ai && uv run ruff format .
 
+corpus-check: ## Verify the hand-downloaded eval corpus against eval/corpus/manifest.json
+	python3 services/ai/scripts/check_corpus.py eval/corpus
+
 spike: .env ## Block 0 OpenAI spike: streaming, prompt cache, temperature, Flex (< $0.01)
 	cd services/ai && uv run --env-file ../../.env python scripts/spike_openai.py
 
