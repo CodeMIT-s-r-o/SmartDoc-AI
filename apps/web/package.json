@@ -23,7 +23,8 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
-    "react-oidc-context": "^3.3.1"
+    "react-oidc-context": "^3.3.1",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.2",

@@ -5,7 +5,7 @@ AWS_ADMIN_PROFILE ?= codemit
 DEV_APP_PROFILE ?= smartdoc-dev-app
 DEV_STACKS := SmartDoc-Dev-Storage SmartDoc-Dev-Auth
 
-.PHONY: hooks secrets eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
+.PHONY: replay replay-report hooks secrets eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
 	cdk-bootstrap cdk-diff-dev cdk-dev dev-config creds invite login-url
 
 help: ## List targets
@@ -87,6 +87,13 @@ eval-fixture: ## Dump the ingested eval corpus to eval/fixtures (after the corpu
 
 eval-ci: ## Tier-1 eval as CI runs it: fresh database + committed fixture, no API calls
 	scripts/eval-ci.sh $(ARGS)
+
+replay: .env ## Cost replay: naive vs sensible vs optimized on synthetic traffic (~$0.35)
+	cd services/ai && uv run python -m evals.replay $(ARGS)
+
+replay-report: ## Copy the newest full replay into the Cost page (apps/web/src/cost/replay.json)
+	cd services/ai && uv run python -m evals.replay --report \
+	  "$$(ls -t ../../eval/results/replay-*.json | grep -v -- -pilot | head -1)"
 
 golden-review: ## Review golden candidates next to the cited PDF pages: http://127.0.0.1:8766
 	cd services/ai && uv run python -m evals.review

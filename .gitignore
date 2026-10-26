@@ -37,3 +37,4 @@ eval/generated/
 
 # Dry runs on unreviewed golden items stay local
 eval/results/*-pending.json
+eval/results/*-pilot.json

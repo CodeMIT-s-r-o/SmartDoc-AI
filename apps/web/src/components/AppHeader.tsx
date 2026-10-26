@@ -1,4 +1,5 @@
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
+import InsightsIcon from '@mui/icons-material/Insights';
 import LogoutIcon from '@mui/icons-material/Logout';
 import {
   AppBar,
@@ -45,7 +46,15 @@ function UsageChip({ me }: { me: Me }) {
   );
 }
 
-export function AppHeader({ me, onSignOut }: { me: Me | undefined; onSignOut: () => void }) {
+export function AppHeader({
+  me,
+  onSignOut,
+  onOpenCost,
+}: {
+  me: Me | undefined;
+  onSignOut: () => void;
+  onOpenCost: () => void;
+}) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   return (
     <AppBar
@@ -86,6 +95,19 @@ export function AppHeader({ me, onSignOut }: { me: Me | undefined; onSignOut: ()
             />
           </Box>
           <Divider />
+          {me?.isAdmin && (
+            <MenuItem
+              onClick={() => {
+                setAnchor(null);
+                onOpenCost();
+              }}
+            >
+              <ListItemIcon>
+                <InsightsIcon fontSize="small" />
+              </ListItemIcon>
+              Cost
+            </MenuItem>
+          )}
           <MenuItem onClick={onSignOut}>
             <ListItemIcon>
               <LogoutIcon fontSize="small" />
