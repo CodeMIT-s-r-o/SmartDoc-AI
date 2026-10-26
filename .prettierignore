@@ -10,3 +10,5 @@ cdk.out/
 apps/api/drizzle/meta/
 # Generated from the zod contract (yarn workspace @smartdoc/contracts build:schema)
 packages/contracts/schema/
+# Written by the eval harness and the cost replay (make eval, make replay)
+eval/results/
