@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AdminModule } from './admin/admin.module.js';
 import { AuthGuard } from './auth/auth.guard.js';
 import { AuthModule } from './auth/auth.module.js';
 import { TenantThrottlerGuard } from './auth/tenant-throttler.guard.js';
@@ -29,6 +30,7 @@ import { UsersModule } from './users/users.module.js';
     DocumentsModule,
     ConversationsModule,
     HealthModule,
+    AdminModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: ProblemJsonFilter },

@@ -693,3 +693,51 @@ one is private, so Graviton images need QEMU builds, a public repository, or an 
 **Local ports:** two other local projects publish Postgres on 5432 and 5433. SmartDoc ran with
 `DB_PORT=5434 AI_PORT=8001`.
 
+
+## 2026-10-26: Block 2.8 (cost replay and the Cost page)
+
+**Result:** the same synthetic traffic through three configurations, costed from the ledger, and an
+admin Cost page that shows the live ledger next to the replay.
+
+| Arm (238 queries, 48 exact repeats) | $/1k queries | p50 per query | Prompt cache share | Latency p50 / p95 |
+|---|---|---|---|---|
+| Naive: effort `medium`, implicit caching, k = 8, no gate, no cache | $0.46 | $0.00053 | 44 % | 2.6 s / 7.1 s |
+| Sensible: effort `none`, no prompt caching, k = 5 | $0.36 | $0.00035 | 0 % | 1.4 s / 2.3 s |
+| Optimized: production defaults | $0.20 | $0.00024 | 39 % | 1.6 s / 3.4 s |
+
+- **Waterfall** (per 1k queries): no reasoning and a smaller context −$0.105, prompt cache
+  −$0.095, exact cache −$0.041 (40 of the 48 repeats hit: only answered questions are cached, so
+  a repeat of a declined question misses, and one repeat ran in the same batch as its first copy), and −$0.018 that no named mechanism explains (rewrite calls, fewer output
+  tokens, run-to-run noise). The last step is computed as the remainder, so the steps always add
+  up to the measured totals.
+- **Naive is not a straw man:** implicit caching already gave it a 44 % cached share. Most of its
+  extra cost is 28k reasoning tokens billed at the output rate.
+- **The quality side:** without reasoning, the model declined 50 of 238 questions instead of 24.
+  The replay measures dollars only; whether those refusals are correct is the eval's job (2.7).
+- **The gate never fired** in the optimized arm (0 refusals), consistent with the uncalibrated τ
+  in the eval dry run.
+- **Spend:** $0.24 for the full run, plus $0.03 for the 12-query pilot.
+
+**How it runs:** `make replay` drives `ChatPipeline` directly on the eval corpus (tenant
+eval-main), four requests at a time and in order, so a repeat arrives after its first answer was
+stored. The exact cache is emptied before the optimized arm. Results go to
+`eval/results/replay-*.json`; `make replay-report` copies the newest full run into the web app.
+
+**Cost page** (`#/cost`, admins only, `GET /api/admin/metrics` and `/api/admin/feedback`):
+- tiles: cost per answer (p50), exact cache hit rate, prompt cache share of chat input tokens, and
+  booked savings next to the total spend;
+- spend per day by purpose (Bratislava days, empty days included), with a table of the same
+  numbers;
+- the replay waterfall and a table of the three arms;
+- the 50 newest thumbs-downs with the question, the answer, the reasons and the request id.
+- Charts use Recharts with a validated categorical palette (separate steps for dark mode). Three
+  light-mode colors are below 3:1 contrast, so every chart has direct labels or a table.
+
+**Deviations from the plan:**
+- The plan ran the replay on production through `/internal/chat` with 300 questions per arm. It
+  runs locally on the eval corpus with 238, because production does not exist yet. Re-run on
+  production after Phase 3 of the deploy plan.
+- Leave-one-out per lever is not done; the waterfall attributes from the optimized arm's own
+  ledger instead.
+- Token reconciliation against the OpenAI usage export (±2 %) is still a manual step.
+- The thumbs-down table shows request ids instead of Langfuse links (Langfuse is not set up).

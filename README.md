@@ -48,8 +48,10 @@ SmartDoc AI is a portfolio project. It is built to be defended in a technical in
 - Exact answer cache: the same question over the same documents is answered once, then served at $0.
 - Follow-up questions ("and how many of them…") are rewritten into standalone questions for search.
 - Upload dedup: the browser's SHA-256 finds an existing copy (409), and S3 rejects bytes that do not match it.
+- Admin Cost page: ledger spend per day by purpose, cost per answer, cache hit rates, booked savings, the replay
+  waterfall and the thumbs-down answers.
 
-**Next:** the eval harness and calibration, then AWS deployment and CI/CD, the cost replay and an admin cost page.
+**Next:** the golden-set review and calibration, then AWS deployment ([plan](docs/DEPLOY_PLAN.md)).
 
 ## Architecture
 
@@ -155,7 +157,11 @@ _No eval results yet._
 
 | Cost replay (synthetic) | naive $/1k | sensible $/1k | optimized $/1k | Δ vs sensible | top levers |
 |---|---|---|---|---|---|
-| _not run yet_ | | | | | |
+| 2026-10-26, 238 queries per arm (48 exact repeats) | $0.46 | $0.36 | $0.20 | −43 % (−$0.15) | no reasoning −$0.11, prompt cache −$0.09, exact cache −$0.04 |
+
+Costs come from the ledger rows of each arm's requests ([results](eval/results/replay-2026-10-26T213550-427784a.json),
+`make replay`). Cheaper is not free: without reasoning the model declined more questions (24 → 50 of 238), and that
+quality cost is measured by the eval, not by the replay.
 
 **Initial targets** (to be confirmed or refuted by the eval, and published either way):
 
@@ -244,7 +250,7 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
   - [x] budgets;
   - [x] exact cache, follow-up rewrite, dedup;
   - [ ] eval harness and sweeps;
-  - [ ] cost replay and the Cost page;
+  - [x] cost replay and the Cost page (token reconciliation against the OpenAI usage export pending);
   - [ ] docs and a restore drill.
 - [ ] **Stretch.** Row-level security, semantic cache with a false-hit eval, reranking, promptfoo red-teaming, shared workspaces.
 
