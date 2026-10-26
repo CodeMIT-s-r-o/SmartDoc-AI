@@ -21,9 +21,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE smartdoc_owner IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO smartdoc_app;
 SQL
 
-docker compose run --rm -T \
-  -e MIGRATE_DATABASE_URL="postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@db:5432/$DB" \
-  migrate >/dev/null
+# Migrations from the host (needs `make install`), so CI does not have to build the API image.
+MIGRATE_DATABASE_URL="postgresql://smartdoc_owner:${DB_OWNER_PASSWORD:-smartdoc_owner_dev}@127.0.0.1:${DB_PORT:-5432}/$DB" \
+  yarn workspace @smartdoc/api db:migrate
 docker compose exec -T db pg_restore -U smartdoc_owner -d "$DB" --data-only --single-transaction \
   < eval/fixtures/eval_corpus.dump
 

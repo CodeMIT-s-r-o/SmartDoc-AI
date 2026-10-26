@@ -663,3 +663,33 @@ container) and the embeddings are weaker for Slovak.
   This explains the sporadic timeouts in the parallel `make check` (health, CDK and documents
   e2e tests pass alone).
 
+## 2026-10-26: CI on GitHub Actions and the deployment plan
+
+**Result:** `.github/workflows/ci.yml` runs on every push to `main` and every pull request, with
+the same make targets as a laptop and no secrets.
+
+| Job | What it runs |
+|---|---|
+| Lint, types, unit tests | `make lint`, `make typecheck`, `make test` |
+| Database tests and offline eval | Postgres + pgvector through compose (roles from `init-roles.sh`), migrations from the host, `make test-db`, then `make eval-ci` |
+| Secret scan | gitleaks over the full history (`--redact`) |
+
+- **Offline eval:** `make eval-ci` restores the committed fixture and runs tier 1 without any API
+  call. The run uploads its results as an artifact.
+- **Gates:** `make eval` gained `--fail-on`. CI gates on `cross_tenant_leaks` only: the quality
+  thresholds would fail today and become gates after the calibration in 2.7. Until the golden set
+  is reviewed, CI includes the unreviewed items and its results say so.
+- **gitleaks:** runs from its official image, because gitleaks-action needs a license for
+  organization repositories. Git's `safe.directory` is set through environment variables,
+  because the container's user does not own the checkout.
+- **Migrations:** `eval-ci.sh` now migrates from the host, so CI never has to build the API
+  image.
+
+**Deployment plan:** [DEPLOY_PLAN.md](DEPLOY_PLAN.md) orders Blocks 2.2 and 2.3 into four phases
+with a check after each, the prerequisites only the account owner can do, and the decisions to
+make first. One finding: GitHub's arm64 runners are free only for public repositories, and this
+one is private, so Graviton images need QEMU builds, a public repository, or an x86 instance.
+
+**Local ports:** two other local projects publish Postgres on 5432 and 5433. SmartDoc ran with
+`DB_PORT=5434 AI_PORT=8001`.
+

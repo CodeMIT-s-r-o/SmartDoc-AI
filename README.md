@@ -1,5 +1,7 @@
 # SmartDoc AI
 
+[![CI](https://github.com/CodeMIT-s-r-o/SmartDoc-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeMIT-s-r-o/SmartDoc-AI/actions/workflows/ci.yml)
+
 > Production-grade RAG with measured cost controls.
 
 Invited users upload internal PDFs (manuals, policies) and chat with them. Answers stream in with page-level citations,
@@ -10,7 +12,8 @@ by a number the repo can reproduce.
 deployed with CDK: upload, ingestion, streaming chat with page citations, cost per answer, feedback and per-user daily
 budgets, an exact answer cache, standalone rewrite of follow-up questions and upload dedup. Next: the eval harness and
 calibration; AWS deployment is postponed until after them. Not deployed yet, no other users. Progress and measurements:
-[docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan: [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
+[docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan: [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md); deployment:
+[docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md).
 The planned demo URL is https://smartdoc.codemit.sk.
 
 ---

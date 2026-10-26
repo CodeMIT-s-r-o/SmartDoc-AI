@@ -426,6 +426,9 @@ async def run(args: argparse.Namespace) -> None:
             indent=2,
         )
     )
+    failed = [m for m in args.fail_on if not results["thresholds"].get(m, "").startswith("pass")]
+    if failed:
+        raise SystemExit(f"thresholds not met: {', '.join(failed)}")
 
 
 def main() -> None:
@@ -434,6 +437,12 @@ def main() -> None:
     parser.add_argument("--offline", action="store_true", help="never call OpenAI (tier 1 only)")
     parser.add_argument(
         "--include-pending", action="store_true", help="also unreviewed golden items"
+    )
+    parser.add_argument(
+        "--fail-on",
+        type=lambda v: [m for m in v.split(",") if m],
+        default=[],
+        help="comma-separated thresholds.yaml metrics that must pass (exit 1 otherwise)",
     )
     args = parser.parse_args()
     if args.offline:
