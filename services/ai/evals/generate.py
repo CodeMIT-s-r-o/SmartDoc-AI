@@ -1,4 +1,4 @@
-"""Generate dataset candidates from the ingested corpus (docs/IMPLEMENTATION_PLAN.md §8).
+"""Generate dataset candidates from the ingested corpus (docs/planning/IMPLEMENTATION_PLAN.md §8).
 
     make eval-generate
 

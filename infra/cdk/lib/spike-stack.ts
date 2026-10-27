@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 const SPIKE_DIR = fileURLToPath(new URL('../../spike', import.meta.url));
 
 /**
- * Throwaway (docs/DEPLOY_PLAN.md, Phase 1): does an SSE stream survive CloudFront → Node Function
+ * Throwaway (docs/runbooks/deploy-prod.md, Phase 1): does an SSE stream survive CloudFront → Node Function
  * URL → Python Function URL, both in response-streaming mode behind the Lambda Web Adapter?
  */
 export class SpikeStack extends Stack {

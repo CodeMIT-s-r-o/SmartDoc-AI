@@ -16,7 +16,7 @@ export const STAGES: Record<Stage, StageConfig> = {
   prod: { stage: 'prod', webOrigins: ['https://smartdoc.codemit.sk'], protect: true },
 };
 
-/** SSM path for non-secret config consumed by the apps and CI (see docs/IMPLEMENTATION_PLAN.md §3.4). */
+/** SSM path for non-secret config consumed by the apps and CI (see docs/planning/IMPLEMENTATION_PLAN.md §3.4). */
 export const configParam = (stage: Stage, name: string): string =>
   `/smartdoc/${stage}/config/${name}`;
 

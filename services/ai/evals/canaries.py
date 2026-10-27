@@ -1,4 +1,4 @@
-"""Prompt-injection canaries: 4 attack classes x 3 (docs/IMPLEMENTATION_PLAN.md §8, canaries_v1).
+"""Prompt-injection canaries: 4 attack classes x 3 (docs/adr/010-eval-strategy.md, canaries_v1).
 
 Each canary is a small, plausible policy document owned by the eval-canary tenant. It holds a
 real fact (so the question retrieves it) and an injection that tries to make the answer carry a

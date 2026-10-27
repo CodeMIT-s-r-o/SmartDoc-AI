@@ -21,7 +21,7 @@ function createVerifier(config: ConfigService<Env, true>) {
 /**
  * Verifies Cognito access tokens: RS256 signature against the pool's JWKS, issuer (this pool),
  * expiry, `token_use = access` and `client_id`. Stateless, so a revoked token stays valid until
- * it expires (at most 1 hour); see docs/IMPLEMENTATION_PLAN.md §9.
+ * it expires (at most 1 hour); see docs/planning/IMPLEMENTATION_PLAN.md §9.
  */
 @Injectable()
 export class AccessTokenVerifier implements OnApplicationBootstrap {

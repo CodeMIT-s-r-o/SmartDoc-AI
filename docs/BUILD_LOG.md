@@ -1,6 +1,6 @@
 # Build log
 
-Planned vs actual time per block of [IMPLEMENTATION_PLAN.md §12](IMPLEMENTATION_PLAN.md#12-schedule),
+Planned vs actual time per block of [the original plan, §12](planning/IMPLEMENTATION_PLAN.md#12-schedule),
 plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted (Claude Code).
 
 | Block | Planned | Actual | Status | Notes |
@@ -21,7 +21,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 2.1 Generated IDOR test, ledger formula tests | 1 h | 0.5 h | done (scope hash moves to 2.5) | see 2026-10-01 (Block 2.1) |
 | 2.4 Budgets: reservations, release, sweeper, 429 + banner | 1 h | 0.9 h | done | see 2026-10-05 (Block 2.4), ADR-008 |
 | 2.5 Exact cache, scope hash, savings, rewrite, upload dedup | 2 h | 1.5 h | done (rewrite pulled in from cut-if-behind) | see 2026-10-22 (Block 2.5), ADR-005 |
-| 2.2 Deploy spike | 4 h | not timed | done: streaming spike passed; deployment postponed (local only) | see 2026-10-27, DEPLOY_PLAN.md, ADR-009 |
+| 2.2 Deploy spike | 4 h | not timed | done: streaming spike passed; deployment postponed (local only) | see 2026-10-27, runbooks/deploy-prod.md, ADR-009 |
 | 2.3 CI/CD | 3 h | not timed | CI done; deploy workflow postponed | see 2026-10-26 (CI) |
 | 2.6 Eval corpus, datasets, harness (tiers 1-2), CI fixture | 2.5 h | 2.5 h | in progress: golden review pending | see 2026-10-23 (Block 2.6) |
 | 2.7 Sweeps, calibration, judge, README table | 1.5 h | | waiting for the golden review | |
@@ -690,7 +690,7 @@ the same make targets as a laptop and no secrets.
 - **Migrations:** `eval-ci.sh` now migrates from the host, so CI never has to build the API
   image.
 
-**Deployment plan:** [DEPLOY_PLAN.md](DEPLOY_PLAN.md) orders Blocks 2.2 and 2.3 into four phases
+**Deployment plan:** [deploy-prod.md](runbooks/deploy-prod.md) orders Blocks 2.2 and 2.3 into four phases
 with a check after each, and lists the prerequisites only the account owner can do.
 - **Same shape as randevu and grosik:**
   - Lambda behind CloudFront;
@@ -779,7 +779,7 @@ stays only as the fallback.
 
 ## 2026-10-27: Local only; production design is VPC + NAT; OpenAPI
 
-**Decision:** SmartDoc runs on localhost only. [DEPLOY_PLAN.md](DEPLOY_PLAN.md) keeps the production
+**Decision:** SmartDoc runs on localhost only. [deploy-prod.md](runbooks/deploy-prod.md) keeps the production
 design and a step-by-step procedure (≈ 1.5–2 days) for when it is wanted.
 
 - **Production design:** Lambda in a VPC with a NAT instance (fck-nat on a t4g.nano), talking to
@@ -831,3 +831,27 @@ All 17 tables were equal in both. Most of the RTO is the scratch server's first 
 - **Retrieval:** p50 18.8 ms and p95 64.1 ms over 190 questions, warm.
 - **The planner does not use HNSW at this size:** `EXPLAIN ANALYZE` shows a sequential scan, which
   is exact and cheaper here. EXPLAIN at 50k chunks is the open measurement.
+
+## 2026-10-27: Documentation refactor
+
+**Goal:** one current source of truth per topic, procedures as runbooks, and the original plan
+archived instead of half-updated.
+
+- **Index:** [docs/README.md](README.md) is a map by purpose: what to read, the runbooks and the
+  ADRs.
+- **Runbooks:**
+  - [golden-review.md](runbooks/golden-review.md) (new);
+  - [calibration.md](runbooks/calibration.md) (new): the 2.7 procedure with the gate sweep loop;
+  - [deploy-prod.md](runbooks/deploy-prod.md): the former DEPLOY_PLAN.md, now steps first. The
+    design reasoning and the spike evidence live in ADR-009.
+- **Archive:** `IMPLEMENTATION_PLAN.md` and `PLAN_SUMMARY.md` moved to [planning/](planning/)
+  with a README of what changed since. Code comments that cite plan sections point there.
+- **README:** shorter and current:
+  - the local container diagram instead of the EC2 one;
+  - a corrected tech stack (no Langfuse or RAGAS, which are not used);
+  - results, commands with their cost, a progress table and the next steps linking the runbooks.
+- **ADRs:**
+  - 004 gained the replay's prompt-cache numbers;
+  - 005 and 010 point to the calibration runbook;
+  - 006 notes the SQS trigger of the production design.
+- **Checks:** every relative link and anchor in the repository's markdown resolves.

@@ -2,7 +2,7 @@
 
 How SmartDoc is built today (the local stack, `make up`), why, and where it would go next. Decisions
 with their own records are in [adr/](adr/); the production design is in
-[DEPLOY_PLAN.md](DEPLOY_PLAN.md); the REST contract is [openapi.yaml](openapi.yaml).
+[deploy-prod.md](runbooks/deploy-prod.md); the REST contract is [openapi.yaml](openapi.yaml).
 
 ## Context
 
@@ -192,7 +192,7 @@ passes 100 ms.
 
 ## Scaling path
 
-1. **Production as designed** ([DEPLOY_PLAN.md](DEPLOY_PLAN.md)): Lambda functions scale per
+1. **Production as designed** ([deploy-prod.md](runbooks/deploy-prod.md)): Lambda functions scale per
    request, and Aurora Serverless v2 scales in ACUs.
 2. **Ingestion:** SQS instead of polling; more workers.
 3. **Retrieval:**

@@ -13,7 +13,7 @@ const metricsQuery = z
   })
   .refine((q) => !q.from || !q.to || q.from <= q.to, { message: 'from must not be after to' });
 
-/** The Cost page (docs/IMPLEMENTATION_PLAN.md §8): ledger-backed numbers, admins only. */
+/** The Cost page (docs/planning/IMPLEMENTATION_PLAN.md §8): ledger-backed numbers, admins only. */
 @Controller('admin')
 @UseGuards(AdminGuard)
 export class AdminController {

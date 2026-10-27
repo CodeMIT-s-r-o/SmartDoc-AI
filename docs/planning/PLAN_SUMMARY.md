@@ -7,12 +7,8 @@ The interview story rests on two pillars. Both must be **measured**, not claimed
 - **Cost controls:** $/1k queries across three replay arms, the savings from each mechanism, and live budget caps.
 - **Quality monitoring:** a README eval table generated from committed results, with ablations.
 
-Status: this is the plan as written on 2026-09-25, kept as it was. What was built and measured since is in
-[BUILD_LOG.md](BUILD_LOG.md) and the README roadmap. Two decisions changed later:
-- **Deployment:** Lambda in a VPC with a NAT instance and Aurora Serverless v2 replaces the single EC2 instance below,
-  and SmartDoc runs on localhost only for now ([DEPLOY_PLAN.md](DEPLOY_PLAN.md)).
-- **API contract:** a hand-written [openapi.yaml](openapi.yaml), kept in sync by a route test, instead of
-  `@nestjs/swagger`.
+Status: the plan as written on 2026-09-25, kept as it was. See [README.md](README.md) for what changed and where the
+current documentation is.
 
 **Fixed by the user (2026-09-25):**
 - React/Vite and NestJS + Drizzle.
@@ -33,9 +29,9 @@ Status: this is the plan as written on 2026-09-25, kept as it was. What was buil
 
 **Where the detail lives:**
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md): the full v2 plan (1,469 lines), including SQL, the SSE contract, request flows, the 40-row verification matrix and the 12-question interview Q&A.
-- [planning/research/](planning/research/): the four research reports, with sources.
-- [planning/draft-plan-v1.md](planning/draft-plan-v1.md): the pre-review draft.
-- [planning/reviews/](planning/reviews/): the three reviews, with issues, fixes and likely interview questions.
+- [planning/research/](research/): the four research reports, with sources.
+- [planning/draft-plan-v1.md](draft-plan-v1.md): the pre-review draft.
+- [planning/reviews/](reviews/): the three reviews, with issues, fixes and likely interview questions.
 
 **Spot-checked personally:**
 - `gpt-6-luna` exists at $0.10 input / $0.01 cached / $0.125 cache write / $0.50 output per 1M tokens, default effort medium. Batch and Flex cost −50%.

@@ -118,7 +118,7 @@ nobody has to ration it.
 1. **Local MVP:** done.
 2. **Production hardening:** done (tenancy tests, budgets, cache, CI, Cost page, restore drill).
 3. **Quality baseline:** golden-set review → official eval table → gate calibration (Block 2.7).
-4. **Public demo:** when wanted, following [DEPLOY_PLAN.md](DEPLOY_PLAN.md) (≈ 1.5–2 days).
+4. **Public demo:** when wanted, following [deploy-prod.md](runbooks/deploy-prod.md) (≈ 1.5–2 days).
 
 ## Open questions
 

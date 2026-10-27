@@ -39,7 +39,7 @@ interface ReservationContext {
 }
 
 /**
- * Daily budgets with reservations (docs/IMPLEMENTATION_PLAN.md §7). A chat request holds its
+ * Daily budgets with reservations (docs/planning/IMPLEMENTATION_PLAN.md §7). A chat request holds its
  * worst-case cost before calling the AI service and releases it when the stream ends; the ledger
  * trigger has already moved the real cost into spent_usd by then. Lock order everywhere (here and
  * in the ledger trigger): the user's row, then the app row, so the two never deadlock.
