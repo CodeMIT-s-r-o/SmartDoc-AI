@@ -1,144 +1,216 @@
 # Deployment plan: smartdoc.codemit.sk
 
-How the working local stack becomes a public demo. The target architecture is
-[IMPLEMENTATION_PLAN.md §10](IMPLEMENTATION_PLAN.md#10-aws-infrastructure); this file is the
-executable order of work, what is already done, and what has changed since that section was
-written. It covers Blocks 2.2 (deploy spike) and 2.3 (CI/CD and the real app).
+How the working local stack becomes a public demo, in the same serverless shape as **randevu** and
+**grosik**: Lambda behind CloudFront, Aurora Serverless v2 that pauses when idle, Secrets Manager,
+and `cdk deploy` from GitHub Actions through OIDC after every green CI run on `main`.
+
+This replaces the single-EC2 layout of [IMPLEMENTATION_PLAN.md §10](IMPLEMENTATION_PLAN.md#10-aws-infrastructure),
+which stays below as the fallback. It covers Blocks 2.2 (deploy spike) and 2.3 (CI/CD and the
+real app).
+
+## Why the change
+
+| | EC2 (§10) | Lambda + Aurora (randevu, grosik) |
+|---|---|---|
+| Monthly, demo traffic | ≈ $7.3 until 2026-12-31 (T4g trial), then ≈ $21.3 | ≈ $3–7 |
+| Idle month | ≈ $7–21 (the instance runs anyway) | ≈ $2 (storage, secrets, images) |
+| Operations | OS patches, Docker, Caddy, disk, `pg_dump` timer | none; Aurora backups are built in |
+| Shared with the other projects | nothing | CI role, cert stack, zone import, image builds, `deploy.yml`, smoke test |
+| Costs us | | streaming through Lambda, a Data API adapter in Python, SQS for ingestion, cold starts |
 
 ## Target in one picture
 
 ```text
-browser ──► CloudFront (smartdoc.codemit.sk, ACM cert in us-east-1, WAF on the flat-rate Free plan)
-             ├─ default  ──► S3 SPA bucket (OAC; CloudFront Functions: SPA rewrite, CSP header)
-             └─ /api/*   ──► origin.smartdoc.codemit.sk:443  (adds X-Origin-Verify)
-                              EC2 t4g.small, public subnet, SG = CloudFront prefix list only
-                              Caddy (Let's Encrypt) ─► api ─► ai / ai-worker ─► Postgres on /data
-                              Cognito (prod pool), S3 docs bucket, SSM secrets, CloudWatch
+browser ──► CloudFront (smartdoc.codemit.sk, ACM certificate in us-east-1)
+             ├─ default ─► S3 SPA bucket (OAC; response headers policy with the CSP)
+             └─ /api/*  ─► Lambda Function URL (AWS_IAM via OAC, RESPONSE_STREAM)
+                            NestJS API (Lambda Web Adapter)
+                             ├─ SigV4, streamed ─► Lambda Function URL: FastAPI chat (Python)
+                             ├─ SQS ingest ──────► Lambda: ingest worker (same Python image)
+                             └─ Data API ───────► Aurora Serverless v2, PostgreSQL 17 + pgvector,
+                                                  min 0 ACU (pauses when idle), no NAT, no VPC Lambdas
+EventBridge Scheduler (hourly, flexible window) ─► API housekeeping
+Secrets Manager smartdoc/prod/app · Cognito prod pool · S3 documents · CloudWatch alarms · AWS Budget
 ```
 
 ## Status
 
 | Piece | State |
 |---|---|
-| Dev Storage + Auth stacks (CDK) | done, deployed (Block 1.2) |
-| App: upload, ingest, chat, budgets, cache, dedup | done, local stack |
-| CI (`.github/workflows/ci.yml`): lint, types, tests, DB tests, offline eval, gitleaks | done (this PR) |
-| Prod stacks: Ci, Prod-Storage, Prod-Auth, Prod-Compute, Prod-Edge | to build |
-| Production compose, Caddyfile, `deploy.sh`, `render-env.sh`, Dockerfile prod stages | to build |
-| `deploy.yml` (images, release, SSM deploy, smoke test, SPA upload) | to build |
-| Backups + restore runbook (tested once, RTO recorded) | to build |
+| AWS account 163897793430, region eu-central-1 (with randevu and grosik) | exists |
+| Route 53 zone `codemit.sk` (`Z098890928LZU3VCIGGZE`, owned by codemit-website), imported like randevu | exists |
+| GitHub OIDC provider in the account | exists |
+| CDK bootstrap in eu-central-1 and us-east-1 | exists (randevu and grosik deploy there) |
+| Dev Storage + Auth stacks (Block 1.2) | deployed |
+| CI (`.github/workflows/ci.yml`): lint, types, tests, DB tests, offline eval, gitleaks | done |
+| App changes for Lambda (below) | to build |
+| Stacks: `SmartDoc-Ci`, `SmartDoc-Prod-{Cert,Data,Async,App,Ops}` | to build |
+| `deploy.yml` | to build |
 
-## Prerequisites (Block 0.1, only you can do these)
+## Prerequisites (only you can do these)
 
-- [ ] **AWS account eligibility for the CloudFront flat-rate Free plan** (an account on the Free
-      Tier *plan* is not eligible). If not eligible: pay-as-you-go CloudFront without WAF (see risks).
-- [ ] **DNS for codemit.sk:** confirm the zone is a Route 53 hosted zone in this account (the
-      stacks create `smartdoc` and `origin.smartdoc` records and validate the ACM certificate by
-      DNS) and that it has room (≤ 50 records counted for the plan).
-- [ ] **CDK bootstrap in us-east-1** as well (`cdk bootstrap aws://ACCOUNT/us-east-1`): the
-      certificate, WAF and edge stack live there.
-- [ ] **OpenAI project `smartdoc-prod`** with an *enforced* monthly hard limit ($20) and its own
-      key; a $10–20 prepaid balance.
-- [ ] **Billing alerts e-mail** for the SNS topic (AWS Budget $25, anomaly monitor).
-- [ ] **Decision: ARM image builds** (below).
+- [ ] **OpenAI project `smartdoc-prod`** with an *enforced* monthly hard limit ($20), its own key
+      and a $10–20 prepaid balance.
+- [ ] **GitHub Environment `prod`** in the SmartDoc-AI repository, restricted to `main`
+      (Settings → Environments). Optional: a required reviewer for the first deploys.
+- [ ] **Prod secrets** after the Data stack exists: `scripts/init-secrets.sh prod` asks for the
+      OpenAI key and generates the internal token, as in randevu (names only in
+      `docs/runbooks/prod-secrets.md`, never values).
+- [ ] **Invite yourself** to the prod user pool: `make invite STAGE=prod EMAIL=… ADMIN=1`.
 
-## Decisions to make first
+**Image builds:** the repository is **public**, so GitHub's native arm64 runners
+(`ubuntu-24.04-arm`) are free. The images build natively instead of under QEMU (randevu and grosik
+are private and use QEMU).
 
-1. **Where arm64 images are built.** The instance is Graviton (t4g, arm64). GitHub's hosted arm64
-   runners are free for public repositories only; this repository is private.
-   - **a) Build arm64 under QEMU on the x86 runner** *(recommended)*: no cost, ~3–5× slower builds
-     (estimate: 6–10 minutes per deploy with the `gha` layer cache).
-   - b) Make the repository public: free native arm64 runners, and it is a portfolio project
-     anyway. Needs a check that nothing private is in the history (`make secrets` is clean today).
-   - c) x86 instance (t3a.small, ~$14/month, no free trial): native builds, but loses the T4g
-     trial that makes the instance free until 2026-12-31.
-2. **Public demo access.** Invite-only as planned (Cognito, no sign-up). A shared demo account for
-   interviews, with a low daily budget (`make budget`), is the simplest way to let someone try it.
-3. **Langfuse.** Cut-if-behind in the plan; the deploy works without it (Postgres telemetry and
-   `request_id` cover the basics). Decide before writing the prod config.
+## What changes in the app
+
+1. **Database access through the Data API.** The Lambdas stay outside the VPC, so they reach OpenAI
+   and Cognito without a NAT.
+   - NestJS: Drizzle's `aws-data-api/pg` driver in AWS and `node-postgres` locally and in tests, as
+     in grosik and randevu. Raw `db.execute(sql…)` results are read through one helper that
+     handles both result shapes.
+   - Python: a small `Db` interface with two implementations, psycopg (local, tests, CI) and
+     `rds-data` (AWS). Vectors go in as text with `::halfvec` casts. Transactions use
+     `BeginTransaction`/`CommitTransaction`. The Data API limits (1 MB per result, 45 s per
+     statement) are far above what retrieval returns.
+   - The database tests run against both implementations' SQL (the psycopg one in CI), and the
+     smoke test exercises the Data API one.
+2. **Ingestion through SQS instead of the Postgres job queue.** "Upload complete" sends one message
+   per document. The worker Lambda (the same Python image, a second handler) processes it, and SQS
+   handles retries (`maxReceiveCount: 3`, then a DLQ with an alarm). Locally, ElasticMQ in compose
+   stands in for SQS, as in randevu. Lambda limits: 2 GB memory, 10 minute timeout, 512 MB `/tmp`,
+   with the sandboxed parser's resource limits kept.
+3. **Streaming through Lambda.** grosik polls; SmartDoc streams SSE, so both functions use the
+   Lambda Web Adapter with `AWS_LWA_INVOKE_MODE=response_stream` and Function URLs with
+   `InvokeMode: RESPONSE_STREAM`. NestJS calls the AI function's URL with a SigV4-signed `fetch`
+   and passes the stream through as it does today. **This is the riskiest piece, so it is spiked
+   first (Phase 1).**
+4. **No timers in the process.** The housekeeping tick (expired budget reservations, stuck
+   `streaming` messages) becomes a handler that EventBridge Scheduler invokes **hourly**, and
+   `reserve()` also releases expired reservations itself. Nothing on a timer may touch the
+   database more often than the auto-pause delay, or Aurora never pauses (≈ $50 a month at its
+   0.5 ACU idle floor).
+5. **Cold starts.** NestJS takes 1–3 s, the Python image 2–4 s, and Aurora ≈ 15 s to resume from a
+   pause.
+   - `/api/health` answers `503 db.resuming` while the database wakes up, as in grosik.
+   - The web app shows "Waking up…" and retries.
+   - The auto-pause delay is 1 hour. Before an interview, open the app a minute early.
+6. **Secrets.** Secrets Manager `smartdoc/prod/app` (OpenAI key, internal token) is read at cold
+   start through `SECRETS_ID`, and CDK generates the database secret. Two secrets cost ≈ $0.80 a
+   month.
+7. **CloudFront in front of Function URLs.** With OAC, the browser must send
+   `x-amz-content-sha256` on every POST, as randevu does (`sha256Hex` already exists in the web
+   app). The CSP moves to a CloudFront response headers policy.
+8. **Migrations** run in a CDK `TriggerFunction` after every deploy whose image changed. A failure
+   fails the deploy, as in randevu.
+
+## CI/CD, as in randevu and grosik
+
+- **`ci.yml`** stays as it is: lint, types, unit tests, DB tests, offline eval, gitleaks.
+- **`SmartDoc-Ci` stack**, deployed once by hand: the role `smartdoc-github-deploy`.
+  - Only jobs of this repository in the Environment `prod` can assume it, matched on the
+    repository's numeric IDs.
+  - It can only assume the CDK bootstrap roles and sign in to the public ECR.
+- **`deploy.yml`:**
+  - **Trigger:** `workflow_run` after CI succeeds on a push to `main`, or by hand
+    (`workflow_dispatch`).
+  - **Job:** environment `prod`, `concurrency: deploy-prod`, running on `ubuntu-24.04-arm`.
+  - **Steps:**
+    1. checkout of the CI run's SHA;
+    2. Node 24 and Yarn;
+    3. `yarn workspace @smartdoc/web build` (Cognito and API settings from the stack outputs);
+    4. buildx;
+    5. `configure-aws-credentials` with the role;
+    6. sign in to the public ECR;
+    7. `npx cdk deploy 'SmartDoc-Prod-*' --require-approval never --concurrency 3`.
+  - **Smoke test:**
+    - `GET /` contains `<div id="root">`;
+    - `/api/health` returns `version == run_number` and `db == ok`, with retries while Aurora
+      resumes;
+    - one SSE answer end to end, against a smoke tenant with a $0.01 budget.
+- **Merge to `main` → live in ≈ 10 minutes.** Rollback is "Run workflow" on the previous green
+  commit.
 
 ## Order of work
 
 Each phase ends in a check that must pass before the next one starts.
 
-### Phase 1: Prod infrastructure, without the app (≈ 3 h)
+### Phase 1: Streaming spike (≈ 2 h)
 
-1. CDK stacks in the order Ci → Prod-Storage → Prod-Auth → Prod-Compute → Prod-Edge
-   (`infra/cdk/lib/`), with snapshot tests next to the existing ones:
-   - **Ci:** GitHub OIDC provider and the `GhDeploy` role, trusted only for
-     `repo:CodeMIT-s-r-o/SmartDoc-AI:environment:production`.
-   - **Prod-Storage:** docs, backups and artifacts buckets; ECR repositories (immutable tags,
-     scan on push, keep 10). Termination protection, retained buckets.
-   - **Prod-Auth:** the prod user pool with `smartdoc.codemit.sk` callbacks (already parameterized
-     in `config.ts`; the test "never mentions localhost in prod" exists).
-   - **Prod-Compute:** VPC without NAT, SG from the CloudFront origin-facing prefix list (+80 for
-     ACME), t4g.small with IMDSv2, a 10 GiB encrypted `/data` volume, EIP,
-     `origin.smartdoc.codemit.sk`, the `SmartDoc-Deploy` SSM document, alarms and the $25 budget.
-   - **Prod-Edge (us-east-1):** certificate, WAF, SPA bucket with OAC, CloudFront Functions
-     (SPA rewrite, CSP), `/api/*` behavior with the origin-verify header, health check.
-2. Secrets by hand in SSM (`/smartdoc/prod/secret/*` SecureStrings; the origin-verify String in
-   us-east-1), recorded in `docs/runbooks/prod-secrets.md` (names only, never values).
-3. Subscribe the flat-rate Free plan in the console (`docs/runbooks/cloudfront-plan.md`).
-
-**Check:** `cdk diff` clean after deploy; the instance is reachable only through SSM Session
-Manager; `curl https://origin.smartdoc.codemit.sk` from the internet times out (SG).
-
-### Phase 2: Deploy spike with a hello-world stack (≈ 1 h)
-
-1. `deploy/compose.prod.yml` with Caddy and a 40-line SSE endpoint that streams for 90 s.
-2. Caddy on the Let's Encrypt **staging** CA first (5 duplicate certificates per week on
-   production), then production.
-
-**Check** (the risky parts of the architecture, before any real code depends on them):
-- a 90-second SSE stream through CloudFront is not cut, with events arriving as sent;
-- a request without `X-Origin-Verify` gets 403, and the header never reaches the app;
-- the `X-Forwarded-For` chain gives the client IP to the app (throttling by user still works);
-- the CSP header is present and the Cognito login still works with it.
-
-### Phase 3: Real app and continuous deployment (≈ 3 h)
-
-1. Production Dockerfile stages (`api`, `ai`, `web` build) and `deploy/compose.prod.yml` with the
-   memory limits of §10 (db 512m, api 256m, ai 256m, ai-worker 448m, caddy 48m), restart
-   policies, healthchecks and `stop_grace_period: 30s`; graceful shutdown in NestJS and uvicorn.
-2. `render-env.sh` (SSM → env files on the instance) and `deploy.sh` (pull images, pre-deploy
-   `pg_dump` to S3, migrate, `up -d --wait`, prune).
-3. `deploy.yml`: on push to `main` after CI passes; environment `production`, `concurrency:
-   production`; OIDC → build and push images tagged with the commit SHA → upload `deploy/` to
-   the artifacts bucket → `ssm send-command SmartDoc-Deploy sha=…` → poll → smoke test. The web
-   job builds the SPA with `VITE_*` from SSM, syncs it with immutable caching, and invalidates
-   `index.html` only.
-4. Prod Cognito: invite yourself (`make invite` against the prod pool); budgets per user.
+A throwaway `SmartDoc-Spike` stack with the same pieces and no app:
+- CloudFront → OAC → a Node Function URL (LWA, streaming), which calls a Python Function URL
+  (LWA, streaming, SigV4) that emits an SSE event every second for 90 s.
 
 **Check:**
-- merge to `main` → live in under 15 minutes;
-- smoke test: `/api/health`, an SSE answer end to end, and the log grep for `Bearer ey` finds 0;
-- `docker stats` recorded during a 20 MB ingest + a chat + a deploy at the same time
-  (expected steady state 1.0–1.2 GiB; resize trigger: memory > 85 % for 1 h);
-- one rollback exercised (redeploy the previous SHA).
+- the 90 s stream is not cut, and events arrive as they are sent, not buffered;
+- a request without OAC signing gets 403;
+- the cold-start time of each function is recorded.
+
+**If streaming fails:** the fallback is the EC2 layout below for the API and AI, with Aurora kept.
+It is not polling, because the chat UI depends on SSE.
+
+### Phase 2: App changes (≈ 1 day)
+
+Items 1–8 above, each behind a driver switch (`DB_DRIVER`, `QUEUE_DRIVER`), so `make up`, the tests
+and CI keep working unchanged.
+
+**Check:** `make check`, `make test-db` and `make eval-ci` are green, and the local stack runs with
+ElasticMQ.
+
+### Phase 3: Stacks and the first deploy (≈ 4 h)
+
+Copy and adapt from randevu and grosik: `config.ts`, `zone.ts`, `ci-stack.ts`, `cert-stack.ts`,
+`images.ts`, `site.ts` (CSP), plus snapshot tests next to the existing ones.
+
+| Stack | Contents |
+|---|---|
+| **Cert** (us-east-1) | certificate for `smartdoc.codemit.sk` |
+| **Data** | Aurora (PG 17, pgvector, min 0 / max 2 ACU, Data API, 7-day backups, deletion protection), documents bucket (CORS for the domain only) |
+| **Async** | SQS ingest queue, DLQ, scheduler role |
+| **App** | three functions, Function URLs, CloudFront (SPA + `/api/*`), migrations trigger, hourly schedule |
+| **Ops** | alarms on errors, DLQ depth and throttles; AWS Budget $10 with alerts to `OWNER_EMAIL` |
+
+The prod Cognito pool already has the domain's callbacks parameterized (`config.ts`).
+
+**Check:**
+- `cdk diff` is clean after the deploy;
+- the smoke test passes;
+- a 20 MB PDF ingests;
+- `Bearer ey` appears 0 times in CloudWatch Logs.
 
 ### Phase 4: Operations (≈ 1 h)
 
-1. Nightly `pg_dump -Fc` to the backups bucket (35-day expiry) via a systemd timer.
-2. `docs/runbooks/restore.md`, tested once: restore into a scratch Postgres, compare row counts,
-   **record the RTO** (Block 2.9).
-3. CPU credits back to `STANDARD` after the build weekend; alarms subscribed.
+- Backups are Aurora's own (7 days, point-in-time). **Restore drill:** restore into a new cluster,
+  compare row counts and record the RTO (Block 2.9).
+- `cdk gc` once a month: the CDK asset repository in ECR keeps every old image.
+- Re-run the cost replay against prod and reconcile tokens with the OpenAI usage export (±2 %).
 
-## Cost
+## Cost (estimate, demo traffic ≈ 6k answers a month)
 
-| | Monthly |
+| Item | Monthly |
 |---|---|
-| AWS with the T4g free trial (until 2026-12-31) | ≈ $7.3 (EBS $2.86, IPv4 $3.65, S3/ECR, Route 53) |
-| AWS at list price (from 2027) | ≈ $21.3 |
-| OpenAI demo traffic (≈ 6k answers) | ≈ $2.5 (measured: $0.0002–0.0004 per answer) |
-| Paused (off-season: `pg_dump`, destroy Compute) | ≈ $1 |
+| Lambda, SQS, Scheduler, CloudFront | ≈ $0 (always-free tiers: 1M requests and 400k GB-s of Lambda, 1 TB of CloudFront) |
+| Aurora Serverless v2: billed only while awake, plus storage (≈ 1 GB) | ≈ $1–4 |
+| Secrets Manager (2), CloudWatch logs and alarms, ECR images | ≈ $1.5–2.5 |
+| Route 53 | ≈ $0 (the zone is shared with codemit.sk) |
+| **AWS total** | **≈ $3–7** (grosik estimates $5–10 for the same shape) |
+| OpenAI | ≈ $1.2 (replay: $0.20 per 1k queries) |
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
-| Account not eligible for the flat-rate plan | Pay-as-you-go CloudFront (1 TB free), no WAF; rely on the throttler, budgets and the origin secret |
-| SSE buffered or cut by CloudFront | Phase 2 spike proves it with a 90 s stream before the app depends on it |
-| 2 GiB RAM too tight | Limits per container; the worker dies first (`oom_score_adj`), its job lease is reclaimed; t4g.medium by stop/start |
-| QEMU builds slow | `gha` layer cache; only changed images are rebuilt |
-| Let's Encrypt rate limit | Staging CA until the flow works |
-| Cost run-away | Per-user and global daily budgets (done), OpenAI hard limit, AWS Budget + anomaly monitor |
+| SSE buffered or cut between CloudFront and Lambda | Phase 1 proves it before any app change; fallback is EC2 for the compute |
+| Aurora never pauses (a timer or a monitor keeps it awake) | Hourly housekeeping only; the health check reads the DB only when asked; the Budget alarm catches it within a day |
+| Cold start + resume ≈ 20 s on the first request | "Waking up…" state in the UI; open the app before a demo |
+| Data API adapter in Python differs from psycopg | The same SQL in both; DB tests in CI on psycopg, the smoke test on the Data API |
+| Cost run-away | Per-user and global daily budgets (done), OpenAI hard limit, AWS Budget |
+
+## Fallback: single EC2 instance
+
+If Phase 1 fails, the compute goes to the layout of IMPLEMENTATION_PLAN §10:
+- t4g.small with Caddy and the compose stack;
+- CloudFront with an origin-verify header;
+- deployed through an SSM `send-command`.
+
+It costs ≈ $7.3 a month until 2026-12-31 and ≈ $21.3 after.

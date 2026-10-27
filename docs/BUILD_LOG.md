@@ -686,9 +686,20 @@ the same make targets as a laptop and no secrets.
   image.
 
 **Deployment plan:** [DEPLOY_PLAN.md](DEPLOY_PLAN.md) orders Blocks 2.2 and 2.3 into four phases
-with a check after each, the prerequisites only the account owner can do, and the decisions to
-make first. One finding: GitHub's arm64 runners are free only for public repositories, and this
-one is private, so Graviton images need QEMU builds, a public repository, or an x86 instance.
+with a check after each, and lists the prerequisites only the account owner can do.
+- **Same shape as randevu and grosik:**
+  - Lambda behind CloudFront;
+  - Aurora Serverless v2 through the Data API (pauses when idle);
+  - Secrets Manager;
+  - `cdk deploy` from GitHub Actions through OIDC after a green CI run.
+- **Why not the single EC2 instance of the original plan:** ≈ $3–7 a month instead of $7–21, and
+  no server to run.
+- **Already in the account** (from the other two projects): the `codemit.sk` hosted zone, the
+  GitHub OIDC provider and the CDK bootstrap in both regions.
+- **Image builds:** the repository is public, so the arm64 images build on GitHub's free native
+  arm64 runners.
+- **Riskiest piece:** SSE through CloudFront and two Lambda Function URLs. Phase 1 is a spike that
+  proves it; EC2 stays as the fallback for the compute.
 
 **Local ports:** two other local projects publish Postgres on 5432 and 5433. SmartDoc ran with
 `DB_PORT=5434 AI_PORT=8001`.
