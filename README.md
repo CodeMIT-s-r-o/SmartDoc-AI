@@ -264,13 +264,16 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
   - [x] eval harness, datasets and the offline CI path;
   - [ ] golden-set review, calibration and the official eval table (Block 2.7);
   - [x] cost replay and the Cost page (token reconciliation against the OpenAI usage export pending);
-  - [ ] docs and a restore drill.
+  - [x] docs (PRD, architecture, interview notes, 10 ADRs) and a restore drill (RTO 8–11 s locally).
 - [ ] **Stretch.** Row-level security, semantic cache with a false-hit eval, reranking, promptfoo red-teaming, shared workspaces.
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
+| [docs/INTERVIEW.md](docs/INTERVIEW.md) | Pitch, walk-through, the questions this project invites and measured answers |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Context and container diagrams, the main flows, data ownership, capacity, failure modes |
+| [docs/PRD.md](docs/PRD.md) | Personas, user stories, requirements with measured status, privacy and data flows |
 | [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md) | Condensed plan: decisions, architecture, schedule, verification |
 | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Full plan: SQL, SSE contract, flows, verification matrix, interview Q&A |
 | [docs/planning/research/](docs/planning/research/) | Research reports with sources (LLM cost, Python stack, AWS, evaluation) |
@@ -279,9 +282,9 @@ One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbo
 | [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
 | [docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md) | Production design, the streaming spike's results and the deploy procedure |
 | [docs/openapi.yaml](docs/openapi.yaml) | The REST API (OpenAPI 3.1); a test keeps it in sync with the mounted routes |
-| [docs/adr/](docs/adr/) | Architecture decision records (6 of 10 so far) |
+| [docs/adr/](docs/adr/) | Architecture decision records (10) |
+| [docs/runbooks/](docs/runbooks/) | Dev AWS setup; database restore (`make restore-drill`) with measured RTO |
 
-Planned: `docs/PRD.md`, `docs/ARCHITECTURE.md`, the remaining ADRs and `docs/INTERVIEW.md`.
 
 ## License
 
