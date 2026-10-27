@@ -43,6 +43,7 @@ Secrets Manager smartdoc/prod/app · Cognito prod pool · S3 documents · CloudW
 | CDK bootstrap in eu-central-1 and us-east-1 | exists (randevu and grosik deploy there) |
 | Dev Storage + Auth stacks (Block 1.2) | deployed |
 | CI (`.github/workflows/ci.yml`): lint, types, tests, DB tests, offline eval, gitleaks | done |
+| Phase 1: streaming spike | **passed** 2026-10-27 (below) |
 | App changes for Lambda (below) | to build |
 | Stacks: `SmartDoc-Ci`, `SmartDoc-Prod-{Cert,Data,Async,App,Ops}` | to build |
 | `deploy.yml` | to build |
@@ -135,7 +136,7 @@ are private and use QEMU).
 
 Each phase ends in a check that must pass before the next one starts.
 
-### Phase 1: Streaming spike (≈ 2 h)
+### Phase 1: Streaming spike (≈ 2 h): passed
 
 A throwaway `SmartDoc-Spike` stack with the same pieces and no app:
 - CloudFront → OAC → a Node Function URL (LWA, streaming), which calls a Python Function URL
@@ -148,6 +149,34 @@ A throwaway `SmartDoc-Spike` stack with the same pieces and no app:
 
 **If streaming fails:** the fallback is the EC2 layout below for the API and AI, with Aurora kept.
 It is not polling, because the chat UI depends on SSE.
+
+**Result (2026-10-27, [infra/spike/](../infra/spike/)):** three concurrent 90 s streams through
+CloudFront: Node alone, Node relaying Python, and the same as a POST with a payload hash.
+
+| Check | Result |
+|---|---|
+| Events received / sent | 90 / 90 on every stream, `done` arrived |
+| Largest gap between two events | 1.0 s (no buffering anywhere on the path) |
+| Time to first byte, warm | 130–320 ms |
+| Time to first byte, both functions cold | 6.6 s (Node init 0.8–1.0 s, Python init 4.7 s) |
+| Function URL called without CloudFront | 403 |
+| POST through CloudFront without `x-amz-content-sha256` | 403 (the browser must send it) |
+
+- **New Function URLs need two permissions:** `lambda:InvokeFunctionUrl` and also
+  `lambda:InvokeFunction` with the condition `lambda:InvokedViaFunctionUrl`. Without the second
+  one, every call returned 403. CDK's `grantInvokeUrl` and the CloudFront OAC origin add only the
+  first, so the stacks add the second explicitly:
+  - for CloudFront → API: `addPermission` with `invokedViaFunctionUrl: true`;
+  - for API → AI: a role policy statement.
+
+  randevu and grosik do not need this because their URLs are older.
+- **The Python cold start dominates.** The real AI image imports more (openai, pypdf, psycopg), so
+  expect 5–8 s.
+  - Lazy imports cut it down: the parser is needed only by the ingest handler.
+  - A cold demo request can wait ≈ 25 s in total, Aurora's resume included. The "Waking up…"
+    state covers that.
+- **Log groups outlive `cdk destroy`.** The stacks set a retention, and outside prod a removal
+  policy of `DESTROY`.
 
 ### Phase 2: App changes (≈ 1 day)
 
