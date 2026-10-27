@@ -752,3 +752,22 @@ stored. The exact cache is emptied before the optimized arm. Results go to
   ledger instead.
 - Token reconciliation against the OpenAI usage export (±2 %) is still a manual step.
 - The thumbs-down table shows request ids instead of Langfuse links (Langfuse is not set up).
+
+## 2026-10-27: Deploy Phase 1 (streaming spike)
+
+**Result: passed.** SSE survives CloudFront → Node Function URL → Python Function URL, both in
+response-streaming mode behind the Lambda Web Adapter 1.0.0. The serverless plan stands, and EC2
+stays only as the fallback.
+
+- **Streams:** three concurrent 90 s streams (Node alone, Node relaying Python, and a POST with a
+  payload hash). Each got 90 of 90 events with at most 1.0 s between them, so nothing on the path
+  buffers.
+- **Time to first byte:** 130–320 ms warm, 6.6 s with both functions cold (Python's init is
+  4.7 s).
+- **403s:** a Function URL called directly returns 403, and so does a POST through CloudFront
+  without `x-amz-content-sha256`.
+- **Finding:** new Function URLs need `lambda:InvokeFunction` (limited by
+  `lambda:InvokedViaFunctionUrl`) in addition to `lambda:InvokeFunctionUrl`. Every call returned
+  403 until both were granted. randevu and grosik have older URLs and do not need it.
+- **Cost:** a few cents. The stack is destroyed; its two empty log groups were left behind
+  (`cdk destroy` keeps log groups by default).
