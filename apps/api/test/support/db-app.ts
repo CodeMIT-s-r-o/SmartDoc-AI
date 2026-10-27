@@ -32,14 +32,15 @@ export async function startDbTestApp(emailDomain: string): Promise<DbTestApp> {
   return { app, base };
 }
 
-/** Requests as one signed-in user; `path` is relative to the server root. */
+/** Requests as one signed-in user; `path` is relative to the server root. Extra token claims
+ * (e.g. `{ 'cognito:groups': ['admin'] }`) go into the access token. */
 export const userClient =
-  (base: string, sub: string) =>
+  (base: string, sub: string, claims: Record<string, unknown> = {}) =>
   (method: string, path: string, body?: unknown, signal?: AbortSignal) =>
     fetch(`${base}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${accessToken({ sub })}`,
+        Authorization: `Bearer ${accessToken({ sub, ...claims })}`,
         ...(body !== undefined && { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

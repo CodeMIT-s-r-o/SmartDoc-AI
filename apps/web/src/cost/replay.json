@@ -1,0 +1,79 @@
+{
+  "label": "synthetic replay traffic (2026-10-26)",
+  "date": "2026-10-26T21:35:50+00:00",
+  "gitSha": "427784a",
+  "requestsPerArm": 238,
+  "repeats": 48,
+  "arms": [
+    {
+      "arm": "naive",
+      "costPer1kUsd": 0.4609,
+      "costP50Usd": 0.000525075,
+      "promptCacheShare": 0.4375,
+      "latencyP50Ms": 2636.0,
+      "latencyP95Ms": 7072.0,
+      "statuses": {
+        "answered": 214,
+        "no_answer_model": 24
+      }
+    },
+    {
+      "arm": "sensible",
+      "costPer1kUsd": 0.3555,
+      "costP50Usd": 0.00035484,
+      "promptCacheShare": 0.0,
+      "latencyP50Ms": 1367.0,
+      "latencyP95Ms": 2323.0,
+      "statuses": {
+        "answered": 188,
+        "no_answer_model": 50
+      }
+    },
+    {
+      "arm": "optimized",
+      "costPer1kUsd": 0.2014,
+      "costP50Usd": 0.00023724,
+      "promptCacheShare": 0.3856,
+      "latencyP50Ms": 1557.0,
+      "latencyP95Ms": 3436.0,
+      "statuses": {
+        "answered": 153,
+        "no_answer_model": 45,
+        "cached": 40
+      }
+    }
+  ],
+  "waterfall": [
+    {
+      "label": "Naive",
+      "kind": "total",
+      "usdPer1k": 0.4609
+    },
+    {
+      "label": "No reasoning, k = 5",
+      "kind": "step",
+      "usdPer1k": -0.1054
+    },
+    {
+      "label": "Exact answer cache",
+      "kind": "step",
+      "usdPer1k": -0.0411
+    },
+    {
+      "label": "Prompt cache",
+      "kind": "step",
+      "usdPer1k": -0.0946
+    },
+    {
+      "label": "Gate, rewrite, rest",
+      "kind": "step",
+      "usdPer1k": -0.0184
+    },
+    {
+      "label": "Optimized",
+      "kind": "total",
+      "usdPer1k": 0.2014
+    }
+  ],
+  "gateRefusals": 0
+}
