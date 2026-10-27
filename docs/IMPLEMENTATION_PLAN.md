@@ -434,6 +434,10 @@ smartdoc-ai/
 
 ### 5.1 Public REST (NestJS, `/api`, OpenAPI via `@nestjs/swagger`)
 
+> **As built:** the contract is [docs/openapi.yaml](openapi.yaml), written by hand.
+> `apps/api/test/openapi.e2e-spec.ts` fails when it and the mounted routes differ. The table below is the original plan.
+> Not built: `POST /api/documents/:id/retry`, `GET /api/admin/requests` and `PATCH`/`POST /api/admin/users`.
+
 Errors are RFC 9457 `application/problem+json` with a machine `code`. All routes need a Bearer access token, except `/api/health`. A resource the caller does not own always returns **404**.
 
 | Method & path | Body / query | Response |
@@ -861,6 +865,12 @@ response_relevancy: ">= 0.80"
 ---
 
 ## 10. AWS infrastructure
+
+> **Superseded (2026-10-27)** by [DEPLOY_PLAN.md](DEPLOY_PLAN.md):
+> - the production design is Lambda in a VPC with a NAT instance and Aurora Serverless v2;
+> - SmartDoc runs on localhost only until production is wanted.
+>
+> This section stays as the original single-EC2 plan.
 
 **CDK** (aws-cdk-lib **2.271.0**, TypeScript; cdk-nag is stretch):
 - `env` is set explicitly on every stack.

@@ -7,7 +7,12 @@ The interview story rests on two pillars. Both must be **measured**, not claimed
 - **Cost controls:** $/1k queries across three replay arms, the savings from each mechanism, and live budget caps.
 - **Quality monitoring:** a README eval table generated from committed results, with ablations.
 
-Status: planning only. The repo holds no code yet and is not a git repo.
+Status: this is the plan as written on 2026-09-25, kept as it was. What was built and measured since is in
+[BUILD_LOG.md](BUILD_LOG.md) and the README roadmap. Two decisions changed later:
+- **Deployment:** Lambda in a VPC with a NAT instance and Aurora Serverless v2 replaces the single EC2 instance below,
+  and SmartDoc runs on localhost only for now ([DEPLOY_PLAN.md](DEPLOY_PLAN.md)).
+- **API contract:** a hand-written [openapi.yaml](openapi.yaml), kept in sync by a route test, instead of
+  `@nestjs/swagger`.
 
 **Fixed by the user (2026-09-25):**
 - React/Vite and NestJS + Drizzle.
