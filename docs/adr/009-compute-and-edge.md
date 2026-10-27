@@ -6,7 +6,7 @@
 
 ## Context
 
-The original plan (IMPLEMENTATION_PLAN §10) put everything on one EC2 t4g.small: Docker Compose,
+The [original plan](../planning/IMPLEMENTATION_PLAN.md) (§10) put everything on one EC2 t4g.small: Docker Compose,
 Caddy and Postgres on an EBS volume, behind CloudFront. Two things changed:
 
 1. **Cost.** The T4g free trial ends on 2026-12-31. From then on the instance, its public IPv4 and
@@ -26,7 +26,7 @@ SmartDoc differs from both projects in two ways:
 1. **Production design:** CloudFront (SPA from S3, `/api/*` to a Lambda Function URL), three
    Lambda functions in a VPC (api, ai, ingest worker), Aurora Serverless v2 with pgvector reached
    directly, and a NAT instance (fck-nat, t4g.nano) for outbound calls. The full design and procedure
-   are in [DEPLOY_PLAN.md](../DEPLOY_PLAN.md).
+   are in [deploy-prod.md](../runbooks/deploy-prod.md).
 2. **VPC + NAT instead of the Data API** that randevu and grosik use. The app keeps psycopg and
    node-postgres, with transactions, `SET LOCAL hnsw.*`, `executemany` and the pgvector adapters.
    A Data API layer in both services would cost about a day more of work.

@@ -54,5 +54,5 @@ minutes, not seconds.
 ## In production (when deployed)
 
 Aurora keeps 7 days of automated backups with point-in-time recovery, so steps 1–3 become "restore to
-a new cluster at time T" ([DEPLOY_PLAN.md](../DEPLOY_PLAN.md), Step 5). The verification in step 4
+a new cluster at time T" ([deploy-prod.md](deploy-prod.md), Step 5). The verification in step 4
 stays the same.

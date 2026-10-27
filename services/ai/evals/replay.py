@@ -1,4 +1,4 @@
-"""Cost replay: the same synthetic traffic through three configurations (IMPLEMENTATION_PLAN §7).
+"""Cost replay: the same synthetic traffic through three configurations (README.md, "Results").
 
     make replay            # about $0.35 of OpenAI calls; writes eval/results/replay-*.json
     make replay-report     # the Cost page's copy of the newest full run (apps/web/src/cost/)

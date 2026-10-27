@@ -4,287 +4,232 @@
 
 > Production-grade RAG with measured cost controls.
 
-Invited users upload internal PDFs (manuals, policies) and chat with them. Answers stream in with page-level citations,
-and every user sees only their own documents. Every LLM token is accounted for, and every cost or quality claim is backed
-by a number the repo can reproduce.
+Invited users upload internal PDFs (manuals, policies, laws) and chat with them. Answers stream in with page-level
+citations, say "not in the documents" instead of guessing, and every user sees only their own documents. Every LLM token
+is a priced ledger row, and every cost or quality claim is backed by a number the repo can reproduce.
 
-**Status:** everything runs on the local stack (`make up`) against real dev AWS resources (Cognito, S3) deployed with
-CDK:
-- upload, ingestion, streaming chat with page citations;
-- cost per answer, feedback and per-user daily budgets;
-- an exact answer cache, standalone rewrite of follow-up questions and upload dedup;
-- an eval harness, a three-arm cost replay and an admin Cost page.
+**Status (2026-10-27):** feature-complete on the local stack (`make up`), which uses real dev AWS resources (Cognito, S3)
+deployed with CDK. CI runs on every pull request.
 
-CI runs on every pull request.
-
-SmartDoc is **deliberately not deployed**. [docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md) has the production design (Lambda
-in a VPC with a NAT instance, Aurora Serverless v2, ≈ $10–14 a month) and the step-by-step procedure. Its riskiest part,
-SSE through CloudFront and Lambda, is already proven.
-
-More: progress and measurements in [docs/BUILD_LOG.md](docs/BUILD_LOG.md), the plan in
-[docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md), the API in [docs/openapi.yaml](docs/openapi.yaml).
-
----
+What is left:
+- the [golden-set review](docs/runbooks/golden-review.md) and the [calibration](docs/runbooks/calibration.md) that
+  produce the official eval table;
+- **deployment**, deliberately postponed: [deploy-prod.md](docs/runbooks/deploy-prod.md) is the step-by-step procedure
+  for smartdoc.codemit.sk (≈ $10–14 a month), and its riskiest part, SSE through CloudFront and Lambda, is proven.
 
 ## Why this project
 
-SmartDoc AI is a portfolio project. It is built to be defended in a technical interview, so its two headline claims are
-**measured, not asserted**:
+It is a portfolio project, built to be defended in a technical interview, so its two headline claims are **measured, not
+asserted**:
 
-- **Cost.**
-  - $/1k queries is measured on three replay arms: naive defaults, a sensible hand-tuned configuration, and fully optimized.
-  - Savings are attributed to each mechanism.
-  - Per-user daily budgets are enforced live.
-- **Quality.**
-  - The eval table below is generated from committed results JSON.
-  - Retrieval metrics gate CI with zero API calls.
-  - Generation and LLM-judge metrics run locally and are published with their caveats.
+- **Cost:**
+  - $/1k queries measured on three replay arms (naive, sensible, optimized), with the savings attributed per mechanism;
+  - per-user daily budgets that hold under concurrency.
+- **Quality:**
+  - retrieval metrics and 100 cross-tenant probes on every pull request, for $0, from a committed fixture;
+  - a live tier with citations, refusals and injection canaries;
+  - claims pre-registered before the first official run.
 
 ## Features
 
-**Working now** (verified on the local stack, see the build log):
-
-- Invite-only sign-in (Amazon Cognito managed login, OAuth code + PKCE).
-- PDF upload straight to S3 via presigned POST (≤ 20 MB), validated server-side. Asynchronous ingestion in a worker:
-  sandboxed parse → chunk → embed, with retries and specific failure codes (no text layer, encrypted, parse limits).
-- Hybrid retrieval: pgvector HNSW and Postgres full-text search, fused with Reciprocal Rank Fusion.
-- Streaming answers (SSE) with numbered citations, source snippets and "open PDF at page N".
-- Abstains when retrieval is weak, without calling the LLM, and when the model finds no answer in the passages.
-- Degraded mode: a circuit breaker returns the most relevant passages when OpenAI is unavailable.
-- A cost badge on every answer (from the ledger), thumbs up/down with reasons, conversation history.
-- Per-user and global daily budgets with reservations, 429 + `Retry-After` and a UI banner.
-- Exact answer cache: the same question over the same documents is answered once, then served at $0.
-- Follow-up questions ("and how many of them…") are rewritten into standalone questions for search.
-- Upload dedup: the browser's SHA-256 finds an existing copy (409), and S3 rejects bytes that do not match it.
-- Admin Cost page: ledger spend per day by purpose, cost per answer, cache hit rates, booked savings, the replay
-  waterfall and the thumbs-down answers.
-
-**Next:** the golden-set review, then calibration (Block 2.7) and the official eval table.
+- **Upload:** invite-only sign-in (Cognito, OAuth code + PKCE). PDFs go straight to S3 by presigned POST (≤ 20 MB) with
+  a checksum, are validated server-side and deduplicated by SHA-256.
+- **Ingestion:** asynchronous, in a worker. A sandboxed parse, then chunk and embed, with retries and specific failure
+  codes.
+- **Retrieval:** hybrid, pgvector HNSW plus Postgres full text fused with Reciprocal Rank Fusion, in one SQL query.
+- **Answers:**
+  - streamed over SSE, with numbered citations, snippets and "open PDF at page N";
+  - follow-up questions are rewritten into standalone ones;
+  - a relevance gate refuses without an LLM call;
+  - an exact answer cache serves repeats at $0;
+  - a degraded mode (passages without generation) when OpenAI is down.
+- **Cost:**
+  - a cost badge on every answer;
+  - per-user and global daily budgets with reservations, answering 429 + `Retry-After` when exhausted;
+  - an admin Cost page: spend by purpose, cache hit rates, savings, the replay waterfall and the thumbs-down answers.
+- **Feedback:** thumbs up or down with reasons, and conversation history.
 
 ## Architecture
 
-The containers as they run today with Docker Compose, drawn in the originally planned single-EC2 production layout.
-The current production design is Lambda in a VPC with a NAT instance and Aurora Serverless v2:
-[DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md).
-
 ```mermaid
 flowchart LR
-  U["Browser<br/>React SPA"] -->|HTTPS| CF["CloudFront + WAF<br/>smartdoc.codemit.sk"]
-  CF -->|default| SPA[("S3<br/>SPA assets")]
-  CF -->|"/api/*"| CADDY
-  subgraph EC2["EC2 t4g.small, Docker Compose"]
-    CADDY["Caddy<br/>TLS"] --> API["api<br/>NestJS + Drizzle"]
-    API -->|internal token| AI["ai<br/>FastAPI RAG"]
-    WORKER["ai-worker<br/>ingestion"]
-    API --> DB[("Postgres 18<br/>+ pgvector")]
-    AI --> DB
-    WORKER --> DB
-  end
-  U -->|presigned POST / GET| DOCS[("S3<br/>documents")]
-  U -->|OIDC + PKCE| COG["Cognito"]
-  AI --> OAI["OpenAI"]
-  WORKER --> OAI
+  web["web<br/>React + Vite + MUI"] -->|/api| api["api<br/>NestJS + Drizzle"]
+  web -->|presigned POST / GET| s3[("S3 documents")]
+  web -->|OIDC + PKCE| cognito["Cognito"]
+  api -->|SSE, internal token| ai["ai<br/>FastAPI RAG"]
+  api --> db[("Postgres 18 + pgvector<br/>data, vectors, full text,<br/>queue, cost ledger")]
+  ai --> db
+  worker["ai-worker<br/>ingestion"] --> db
+  ai --> openai["OpenAI"]
+  worker --> openai
 ```
 
-- **`api` (NestJS)**:
-  - verifies Cognito access tokens and derives the tenant from `sub`;
-  - owns the schema through Drizzle migrations;
-  - presigns S3 uploads and downloads;
-  - enforces budgets;
-  - proxies the SSE stream and persists messages.
+- **`api`** owns identity, tenancy (`tenant_id` = the token's `sub`), the schema, presigned S3 access, budgets and the SSE
+  pass-through. It is the only container with AWS credentials.
+- **`ai`** runs the RAG pipeline:
+  1. re-checks document scope;
+  2. rewrites follow-ups;
+  3. tries the exact cache;
+  4. runs hybrid retrieval;
+  5. applies the gate;
+  6. streams a cache-friendly prompt;
+  7. writes one ledger row per billed call.
+- **`ai-worker`** claims ingestion jobs from a Postgres queue (`SKIP LOCKED` with leases), parses PDFs in a
+  resource-limited child process, then chunks, embeds and indexes.
 
-  It is the only container with AWS credentials.
-- **`ai` (FastAPI)**:
-  1. re-verifies the document scope;
-  2. checks the exact-match cache;
-  3. runs hybrid retrieval in a single SQL query;
-  4. applies the relevance gate;
-  5. builds a cache-aware prompt and streams the answer;
-  6. writes one ledger row per billed API call.
-- **`ai-worker`**:
-  - claims ingestion jobs from a Postgres queue (`FOR UPDATE SKIP LOCKED` plus a lease);
-  - parses PDFs in a resource-limited child process;
-  - chunks, embeds and indexes.
-- **Postgres + pgvector** holds relational data, vectors, full-text indexes, the job queue and the cost ledger.
-
-Details: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §2 (request flows) and §4 (data model).
-
-## Tech stack
-
-| Layer | Choice |
-|---|---|
-| Frontend | React 19, Vite, TypeScript, TanStack Query, react-oidc-context, Recharts |
-| API | NestJS, Drizzle ORM, aws-jwt-verify, pino |
-| AI service | Python 3.13, FastAPI, official `openai` SDK, `langchain-text-splitters`, psycopg 3 + pgvector, pypdf |
-| Data | PostgreSQL 18 + pgvector 0.8 (`halfvec(1536)`, HNSW) + full-text search |
-| LLM | `gpt-6-luna` (Responses API, `effort: none`), `text-embedding-3-small` |
-| Auth / storage | Amazon Cognito (invite-only), Amazon S3 |
-| Infra | AWS CDK (TypeScript): dev Cognito and S3. Production design: CloudFront, Lambda in a VPC with a NAT instance, Aurora Serverless v2 |
-| CI/CD | GitHub Actions: lint, types, tests, DB tests, offline eval, gitleaks. No deploy workflow (local only) |
-| Observability | Postgres ledger and quality tables (source of truth), Langfuse Cloud EU (traces) |
-| Evaluation | In-process Python harness, RAGAS (judge metrics only) |
-
-The RAG pipeline deliberately avoids framework chains and vector stores. Hybrid retrieval, caching and cost accounting are
-written directly against the schema, so each can be inspected, measured and explained.
-See [ADR-003](docs/adr/003-thin-ai-stack.md).
-
-## Cost controls
-
-| # | Mechanism | Status | How it is measured |
-|---|---|---|---|
-| 1 | Reasoning and output controls (`effort: none`, low verbosity, output cap) | done | Reasoning/output token distributions; naive vs sensible replay delta |
-| 2 | Relevance gate: skip the LLM when nothing relevant is retrieved | done | Refusal accuracy and false-refusal rate next to the estimated savings |
-| 3 | Cache-aware prompt layout with one explicit breakpoint after a static prefix | done | Net savings from `cached_tokens` minus the cache-write premium |
-| 4 | Context budget: top-5 chunks, ≤ 2,000 tokens | done | Recall@k and faithfulness for k = 3, 5 and 8 |
-| 5 | History budget: last 3 turns, ≤ 800 tokens | done | Input tokens vs turn index |
-| 6 | Exact response cache, tenant-scoped, invalidated when documents change | done | Hit rate; savings curve across repeat ratios |
-| 7 | File-level dedup (SHA-256) | done | Embedding tokens saved |
-| 8 | Budgets: per-user daily cap, global daily cap, OpenAI project hard limits | caps done; OpenAI limits pending | 429 count; overshoot bounded by one reservation |
-
-Savings are always reported in **absolute dollars next to percentages**. The replay traffic is labeled as synthetic.
+Diagrams of the flows, data ownership, capacity and failure modes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Results
 
-**Measured so far** (single runs on the dev stack with real OpenAI, not eval results; details in the
-[build log](docs/BUILD_LOG.md)):
+**Cost replay** (synthetic traffic, same questions through three configurations, costed from the ledger):
 
-| Measurement | Value |
-|---|---|
-| Answer with citations, prompt cache cold (prefix written) | $0.00038 |
-| Same, prompt cache warm (1,264-token prefix read at 10%) | $0.000056 |
-| Question refused by the relevance gate (no LLM call) | $0.00000016, 0.17 s |
-| Same question again, exact cache hit (no embedding, no LLM) | $0, 11 ms (first answer $0.00032, 5.3 s) |
-| Standalone rewrite of a follow-up question | $0.00003 |
-| Degraded answer once the circuit breaker is open | $0, 0.26 s |
-| Ingesting a 102-page PDF (214 chunks) | $0.0015 |
-| NestJS proxy overhead on time to first token | ~60 ms |
+| Run | Naive $/1k | Sensible $/1k | Optimized $/1k | Δ vs sensible | Top levers |
+|---|---|---|---|---|---|
+| 2026-10-26, 238 queries per arm (48 exact repeats) | $0.46 | $0.36 | $0.20 | −43 % (−$0.15) | no reasoning −$0.11, prompt cache −$0.09, exact cache −$0.04 |
 
-No eval results yet. The tables below are regenerated by `make eval-report` and are never edited by hand.
+Results: [eval/results/replay-2026-10-26T213550-427784a.json](eval/results/replay-2026-10-26T213550-427784a.json).
+Cheaper is not free: without reasoning the model declined more questions (24 → 50 of 238). Whether those refusals were
+right is measured by the eval, not by the replay.
+
+**Quality:** no official numbers yet. The golden set waits for its review, so the dry run (Hit@5 0.83, citation
+precision 0.82, 0 of 12 injections) is not published as a result. The table below is filled by the calibration runbook
+from committed results files only.
 
 <!-- EVAL:START -->
 _No eval results yet._
 <!-- EVAL:END -->
 
-| Cost replay (synthetic) | naive $/1k | sensible $/1k | optimized $/1k | Δ vs sensible | top levers |
-|---|---|---|---|---|---|
-| 2026-10-26, 238 queries per arm (48 exact repeats) | $0.46 | $0.36 | $0.20 | −43 % (−$0.15) | no reasoning −$0.11, prompt cache −$0.09, exact cache −$0.04 |
-
-Costs come from the ledger rows of each arm's requests ([results](eval/results/replay-2026-10-26T213550-427784a.json),
-`make replay`). Cheaper is not free: without reasoning the model declined more questions (24 → 50 of 238), and that
-quality cost is measured by the eval, not by the replay.
-
-**Initial targets** (to be confirmed or refuted by the eval, and published either way):
+**Targets**, to be confirmed or refuted, and published either way:
 
 | Metric | Target |
 |---|---|
 | Recall@5 | ≥ 0.85 |
-| Refusal accuracy / false-refusal rate | ≥ 0.90 / ≤ 5% |
+| Refusal accuracy / false refusals | ≥ 0.90 / ≤ 5 % |
 | Citation precision | ≥ 0.80 |
-| Faithfulness (LLM judge, report-only) | ≥ 0.85 |
-| Prompt-injection canaries that succeed | 0 / 12 |
-| Cross-tenant retrievals in 100 probes | 0 |
-| Uncached answered query cost | ≤ $0.0005 |
+| Injection canaries that succeed | 0 of 12 |
+| Cross-tenant retrievals in 100 probes | 0 (met in every CI run) |
+| Uncached answered query cost | ≤ $0.0005 (met: $0.00024 p50 in the replay) |
 | p95 time to first token | ≤ 3 s |
 
-## Security and privacy
+**Single measurements** (dev stack, real OpenAI):
 
-- **Isolation:** every table is keyed by `tenant_id`, taken from the Cognito `sub`. Resources you do not own return 404. A generated IDOR test covers every `:id` route, and the AI service re-verifies document scope.
-- **Uploads:** S3 keys are built by the server, the POST policy enforces size and type, magic bytes are checked, and object versions are pinned.
-- **Prompt injection:** untrusted document text is escaped inside delimited tags, and the prompt includes an "untrusted data" rule. Output links are allowlisted and no remote images are rendered. Injection canaries are part of the eval.
-- **Cost abuse:** per-user and global daily budgets with reservations, so parallel requests cannot overshoot by more than one reservation.
-- **Infrastructure (production design, not deployed):** no static AWS keys (GitHub OIDC, Lambda roles, SSO), Function URLs reachable only through CloudFront (OAC, both invoke permissions), Aurora in isolated subnets, and redacted logs.
+| Measurement | Value |
+|---|---|
+| Answer, prompt cache warm / cold | $0.000056 / $0.00038 |
+| Question refused by the gate (no LLM call) | $0.00000016, 0.17 s |
+| Repeat question, exact cache hit | $0, 11 ms |
+| Ingesting a 102-page PDF (214 chunks) | $0.0015 |
+| Retrieval over 1,002 chunks | p50 18.8 ms, p95 64 ms |
+| Database restore, verified | RTO 8–11 s ([runbook](docs/runbooks/restore.md)) |
 
-Full threat table: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §9.
+## Cost controls
+
+| # | Mechanism | How it is measured |
+|---|---|---|
+| 1 | Reasoning and output controls (`effort: none`, low verbosity, output cap) | Naive vs sensible replay delta |
+| 2 | Relevance gate: skip the LLM when nothing relevant is retrieved | Refusal accuracy and false refusals (calibration pending) |
+| 3 | Cache-aware prompt layout with one explicit breakpoint after a static prefix | Net savings from cached tokens minus the write premium |
+| 4 | Context budget: top-5 chunks, ≤ 2,000 tokens | Recall@k for k = 3, 5, 8 |
+| 5 | History budget: last 3 turns, ≤ 800 tokens | Input tokens per turn |
+| 6 | Exact answer cache, tenant-scoped, invalidated when documents change | Hit rate and booked savings |
+| 7 | File-level dedup (SHA-256) | Embedding tokens saved |
+| 8 | Budgets: per-user and global daily caps; OpenAI project hard limits | Overshoot bounded by one reservation |
+
+## Security
+
+- **Isolation:** every table carries `tenant_id`. Resources you do not own answer 404, an IDOR test generated from the
+  mounted routes covers every `:id` route, and the AI service re-verifies document scope.
+- **Uploads:** server-built S3 keys, a POST policy bounding size and type, a bound checksum, magic bytes checked on the
+  pinned object version.
+- **Prompt injection:** document text is delimited and escaped under an "untrusted data" rule. The markdown renderer
+  allows no HTML, no images and no external links. 12 canaries run in the eval.
+- **Secrets:** gitleaks runs in a pre-commit hook and in CI over the full history.
+
+Details and residual risks: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#security).
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Frontend | React 19, Vite, TypeScript, MUI, TanStack Query, react-oidc-context, Recharts |
+| API | NestJS 12, Drizzle ORM, aws-jwt-verify, pino, zod |
+| AI service | Python 3.13, FastAPI, official `openai` SDK, `langchain-text-splitters`, psycopg 3 + pgvector, pypdf |
+| Data | PostgreSQL 18 + pgvector 0.8 (`halfvec(1536)`, HNSW) + full-text search |
+| LLM | `gpt-6-luna` (Responses API, `effort: none`), `text-embedding-3-small` |
+| Auth / storage | Amazon Cognito (invite-only), Amazon S3 |
+| Infra | AWS CDK (TypeScript). Production design: CloudFront, Lambda in a VPC with a NAT instance, Aurora Serverless v2 |
+| CI | GitHub Actions: lint, types, tests, DB tests, offline eval, gitleaks |
+| Evaluation | In-process Python harness; retrieval tier in CI from a fixture |
+
+The RAG pipeline deliberately avoids framework chains and vector store libraries
+([ADR-003](docs/adr/003-thin-ai-stack.md)), so every step can be inspected, measured and explained.
+
+## Getting started
+
+**Prerequisites:** Docker; Node 24+ and any global `yarn` (Yarn 4 is vendored); [uv](https://docs.astral.sh/uv/); an
+OpenAI API key in `.env`; the one-time dev AWS setup and a daily `make creds`
+([docs/runbooks/dev-aws.md](docs/runbooks/dev-aws.md)).
+
+```bash
+make install   # host dependencies for editors and tests (yarn + uv)
+make up        # creates .env on first run, builds and starts the stack, waits until healthy
+make check     # lint, type-check and test TypeScript and Python
+make test-db   # database tests against smartdoc_test in the running stack
+make help      # every target
+```
+
+| URL | Service |
+|---|---|
+| http://localhost:5173 | Web app: sign in with your invite (`/api` is proxied to the API) |
+| http://localhost:3000/api/health | API health: database and AI service |
+
+A realistic test document without licensed content: `cd services/ai && uv run python scripts/make_sample_pdf.py
+handbook.pdf --pages 100`.
+
+**Eval and cost:**
+
+| Command | What it does | Cost |
+|---|---|---|
+| `make eval-ci` | Tier 1 as CI runs it: fresh database, committed fixture, no API calls | $0 |
+| `make golden-review` | Review tool for the golden set ([runbook](docs/runbooks/golden-review.md)) | $0 |
+| `make eval` | Tier 1 + tier 2 on reviewed items, writes `eval/results/` | ≈ $0.02 |
+| `make replay` | Three-arm cost replay, writes `eval/results/replay-*.json` | ≈ $0.25 |
+| `make restore-drill` | Back up, restore into a scratch Postgres, verify, print the RTO | $0 |
 
 ## Repository layout
 
 ```
 apps/web            React SPA (Vite)
 apps/api            NestJS API; Drizzle schema (src/db/schema.ts) and migrations (drizzle/)
-services/ai         FastAPI RAG service and ingestion worker (uv, Python 3.13)
+services/ai         FastAPI RAG service, ingestion worker and eval harness (uv, Python 3.13)
 packages/contracts  Shared SSE event schemas (zod)
-deploy/             Postgres role bootstrap
-docs/               Plan, ADRs, build log; PRD, architecture and interview notes later
-eval/               Corpus manifest, golden datasets, thresholds, fixtures and committed results
-infra/cdk           AWS CDK stacks: dev storage and auth; the streaming spike (bin/spike.ts)
+deploy/db           Postgres role bootstrap
+docs/               Architecture, PRD, interview notes, ADRs, runbooks, OpenAPI, build log
+eval/               Corpus manifest, datasets, thresholds, claims, fixtures and committed results
+infra/cdk           AWS CDK: dev storage and auth; the streaming spike (bin/spike.ts)
 infra/spike         The streaming spike's two Lambda services and its check script
+scripts/            Dev AWS config, invites, the CI eval and the restore drill
 ```
 
-## Getting started
+## Progress
 
-**Prerequisites:**
-- Docker.
-- Node 24+ and any global `yarn`. The repo vendors Yarn 4 in `.yarn/releases`, so Corepack is not needed.
-- [uv](https://docs.astral.sh/uv/). It installs Python 3.13 by itself.
-- An OpenAI API key in `.env`: the ingestion worker needs it (embeddings), and so does `make spike`.
-
-```bash
-make install   # host dependencies for editors and tests (yarn + uv)
-make up        # creates .env on first run, builds and starts the stack, waits until healthy
-make check     # lint, type-check and test TypeScript and Python
-make test-db   # database tests against smartdoc_test in the running stack (needs make up)
-make spike     # OpenAI API spike (needs OPENAI_API_KEY in .env, costs < $0.01)
-```
-
-A realistic test document, without any licensed content:
-
-```bash
-cd services/ai && uv run python scripts/make_sample_pdf.py handbook.pdf --pages 100
-```
-
-| URL | Service |
+| Stage | State |
 |---|---|
-| http://localhost:5173 | Web app: sign in with your invite (proxies `/api` to the API) |
-| http://localhost:3000/api/health | API health: database and AI service status |
-| http://localhost:8000/internal/health | AI service health (internal network only in production) |
+| Local MVP: upload, ingestion, streaming chat with citations, UI | ✅ |
+| Tenancy and IDOR tests, budgets, answer cache, follow-up rewrite, dedup | ✅ |
+| Eval harness, datasets, offline CI tier | ✅ |
+| Cost replay and the Cost page | ✅ (token reconciliation against the OpenAI usage export pending) |
+| PRD, architecture, interview notes, 10 ADRs, restore drill, OpenAPI | ✅ |
+| CI | ✅ |
+| Golden-set review → calibration → official eval table | ⏳ [golden-review](docs/runbooks/golden-review.md), [calibration](docs/runbooks/calibration.md) |
+| Deployment to smartdoc.codemit.sk | ⏸ postponed; [deploy-prod](docs/runbooks/deploy-prod.md) |
+| Stretch: row-level security, semantic cache, reranking, red-teaming, shared workspaces | – |
 
-Source folders are bind-mounted, so the API, the AI service and the web app reload on save.
-Cognito and S3 are real dev resources; there is no emulator, because Cognito has no reliable one.
-One-time AWS setup and daily `make creds`: [docs/runbooks/dev-aws.md](docs/runbooks/dev-aws.md).
-`make help` lists all targets.
-
-## Roadmap
-
-- [x] **Block 0.** Accounts, OpenAI API spike (streaming and prompt caching), toolchain.
-  - [x] toolchain and monorepo scaffold (NestJS 12, Vite, FastAPI, Postgres + pgvector), `make up` healthy;
-  - [x] OpenAI spike (`make spike`);
-  - [x] accounts: OpenAI projects and limits, corpus PDFs (the CloudFront plan check is moot without a deployment).
-- [x] **Weekend 1: local MVP.**
-  - compose stack and Drizzle schema;
-  - Cognito auth;
-  - presigned upload and the ingestion worker;
-  - hybrid retrieval, streaming chat with citations, degraded mode;
-  - chat UI.
-- [ ] **Weekend 2: production** (in progress).
-  - [x] tenancy and IDOR tests;
-  - [x] CI (GitHub Actions);
-  - [x] deployment design and the streaming spike; the deployment itself is postponed (local only);
-  - [x] budgets;
-  - [x] exact cache, follow-up rewrite, dedup;
-  - [x] eval harness, datasets and the offline CI path;
-  - [ ] golden-set review, calibration and the official eval table (Block 2.7);
-  - [x] cost replay and the Cost page (token reconciliation against the OpenAI usage export pending);
-  - [x] docs (PRD, architecture, interview notes, 10 ADRs) and a restore drill (RTO 8–11 s locally).
-- [ ] **Stretch.** Row-level security, semantic cache with a false-hit eval, reranking, promptfoo red-teaming, shared workspaces.
+Block-by-block history with planned against actual time: [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [docs/INTERVIEW.md](docs/INTERVIEW.md) | Pitch, walk-through, the questions this project invites and measured answers |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Context and container diagrams, the main flows, data ownership, capacity, failure modes |
-| [docs/PRD.md](docs/PRD.md) | Personas, user stories, requirements with measured status, privacy and data flows |
-| [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md) | Condensed plan: decisions, architecture, schedule, verification |
-| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Full plan: SQL, SSE contract, flows, verification matrix, interview Q&A |
-| [docs/planning/research/](docs/planning/research/) | Research reports with sources (LLM cost, Python stack, AWS, evaluation) |
-| [docs/planning/reviews/](docs/planning/reviews/) | Adversarial reviews: interviewer, security/correctness, feasibility/cost |
-| [docs/planning/draft-plan-v1.md](docs/planning/draft-plan-v1.md) | The draft plan as it stood before review |
-| [docs/BUILD_LOG.md](docs/BUILD_LOG.md) | Planned vs actual time per block, surprises, measurements |
-| [docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md) | Production design, the streaming spike's results and the deploy procedure |
-| [docs/openapi.yaml](docs/openapi.yaml) | The REST API (OpenAPI 3.1); a test keeps it in sync with the mounted routes |
-| [docs/adr/](docs/adr/) | Architecture decision records (10) |
-| [docs/runbooks/](docs/runbooks/) | Dev AWS setup; database restore (`make restore-drill`) with measured RTO |
-
+Start at [docs/README.md](docs/README.md): an index by purpose, the runbooks and the ADRs.
 
 ## License
 

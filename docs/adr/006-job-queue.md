@@ -31,5 +31,7 @@ already running; every extra service costs RAM and operations time.
 - **Negative:** polling adds up to 2 s of latency and a trivial query every 2 s per worker; one
   job at a time per worker.
 - **Measured:** a 102-page PDF goes from `queued` to `ready` in about 6 s.
-- **Upgrade path:** `LISTEN/NOTIFY` removes the polling latency; SQS (with the same idempotent
-  finalize) when ingestion moves off the single instance.
+- **Upgrade path:** `LISTEN/NOTIFY` removes the polling latency.
+- **Production design** ([ADR-009](009-compute-and-edge.md)): an SQS message with the job id
+  triggers a worker Lambda. The worker claims the job with this same lease code, so the table
+  stays the source of truth and the finalize stays fenced.

@@ -1,7 +1,7 @@
 """One chat turn: scope -> rewrite -> cache -> embed -> retrieval -> gate -> generate -> ledger.
 
 Emits SSE events in contract order: meta, sources, token..., then exactly one of done / error.
-Failure policy (docs/IMPLEMENTATION_PLAN.md §2.3, §6):
+Failure policy (docs/planning/IMPLEMENTATION_PLAN.md §2.3, §6):
 - OpenAI unreachable before the first token, or the breaker is open: a *degraded* answer that
   shows the retrieved passages (keyword search still works without embeddings), at $0.
 - OpenAI fails mid-stream: an `error` event (retryable).

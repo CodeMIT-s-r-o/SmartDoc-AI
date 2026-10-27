@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Chat stream contract (see docs/IMPLEMENTATION_PLAN.md §5.3).
+ * Chat stream contract (see docs/planning/IMPLEMENTATION_PLAN.md §5.3).
  * Framing: `event: <name>\ndata: <json>\n\n`; exactly one terminal event (`done` or `error`).
  */
 

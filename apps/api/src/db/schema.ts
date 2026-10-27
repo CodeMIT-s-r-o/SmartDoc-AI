@@ -1,6 +1,6 @@
 /**
  * SmartDoc AI database schema (Drizzle owns it; the Python services read and write it with SQL).
- * See docs/IMPLEMENTATION_PLAN.md §4. Kept in one file so drizzle-kit needs no module resolution.
+ * See docs/planning/IMPLEMENTATION_PLAN.md §4. Kept in one file so drizzle-kit needs no module resolution.
  *
  * Conventions:
  * - snake_case columns via `casing: 'snake_case'` (drizzle.config.ts and the runtime client).

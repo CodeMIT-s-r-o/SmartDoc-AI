@@ -10,7 +10,8 @@ stacks once and wires them into the local compose stack.
 
 ## One-time setup
 
-1. Bootstrap CDK in eu-central-1 (us-east-1 comes with the edge stack in Weekend 2):
+1. Bootstrap CDK in eu-central-1 (already done in the shared account; us-east-1 is bootstrapped too,
+   for production's certificate):
    ```bash
    make cdk-bootstrap
    ```

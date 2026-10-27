@@ -1,6 +1,6 @@
 """Prompt v1: a static, byte-identical developer prefix (cached), then documents and question.
 
-Layout for explicit prompt caching (docs/IMPLEMENTATION_PLAN.md §6, §7):
+Layout for explicit prompt caching (docs/planning/IMPLEMENTATION_PLAN.md §6, §7):
     [developer: rules + citation format + few-shot examples, >= 1,024 tokens]  <- cache breakpoint
     [history: last turns]  [user: <documents> ... </documents> <question> ... </question>]
 Only the prefix is ever written to OpenAI's prompt cache; tenant content never is.

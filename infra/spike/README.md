@@ -1,4 +1,4 @@
-# Streaming spike (Phase 1 of docs/DEPLOY_PLAN.md)
+# Streaming spike (Phase 1 of docs/runbooks/deploy-prod.md)
 
 Proves the risky part of the serverless layout before any app code depends on it: Server-Sent
 Events from a Python Function URL, through a Node Function URL, through CloudFront, without being

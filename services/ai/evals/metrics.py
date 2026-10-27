@@ -1,4 +1,4 @@
-"""Eval metrics as pure functions (docs/IMPLEMENTATION_PLAN.md §8).
+"""Eval metrics as pure functions (docs/planning/IMPLEMENTATION_PLAN.md §8).
 
 Ground truth is (document, page range), never chunk ids: a retrieved passage is relevant when it
 comes from the gold document and its pages overlap the gold pages. Re-chunking therefore does

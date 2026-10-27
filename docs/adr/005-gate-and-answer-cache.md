@@ -57,4 +57,6 @@ which also made them impossible to cache, because their meaning depends on the c
   Exact matching misses paraphrases; the hit rate depends on how repetitive the questions are,
   which the cost replay measures (savings curve over the repeat ratio).
 - **Pending:** τ and the lexeme threshold are first guesses until the offline sweeps in 2.7
-  (refusal accuracy vs false-refusal rate on the golden set).
+  (refusal accuracy vs false-refusal rate on the golden set). On the dry run, the gate refused
+  0 of 7. The procedure is in [runbooks/calibration.md](../runbooks/calibration.md), and its
+  result is recorded here.

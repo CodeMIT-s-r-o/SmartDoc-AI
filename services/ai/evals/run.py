@@ -1,4 +1,4 @@
-"""Run the eval and write a stamped results file (docs/IMPLEMENTATION_PLAN.md §8).
+"""Run the eval and write a stamped results file (docs/planning/IMPLEMENTATION_PLAN.md §8).
 
     make eval            # tier 1 (retrieval, no LLM) + tier 2 (live LLM, about $0.02)
     make eval-retrieval  # tier 1 only; with --offline it never calls OpenAI (CI)

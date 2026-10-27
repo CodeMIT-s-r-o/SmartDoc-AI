@@ -77,7 +77,8 @@ must be answerable from it in ways a reviewer can check against the source page.
     injections still allows up to 24 %. The intervals are reported, not hidden.
   - **Refusal is judged from the response status.** An answer that correctly says "not in the
     documents" without the NO_ANSWER sentinel counts as answered.
-  - **No LLM judge yet.** Faithfulness is planned for 2.7 as report-only, checked against
+  - **No LLM judge yet.** Faithfulness is planned for 2.7
+    ([runbooks/calibration.md](../runbooks/calibration.md)) as report-only, checked against
     20 human labels.
 - **Open:**
   - the golden-set review;

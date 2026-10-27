@@ -1,5 +1,8 @@
 # SmartDoc AI: implementation plan (v2, 2026-09-25)
 
+> **Archived plan, not maintained.** It describes what was planned on 2026-09-25. For the system as built, see
+> [ARCHITECTURE.md](../ARCHITECTURE.md); for what changed, see [README.md](README.md).
+
 **Scope.** The plan stays inside the fixed decisions: React, NestJS + Drizzle, a Python AI service, Postgres + pgvector, OpenAI, Cognito, S3, Docker, one EC2 instance, CDK, and 2 weekends. v2 adds the findings of three reviews: interviewer, security/correctness, and feasibility/cost. Where reviewers disagreed, this plan picks one answer and says why.
 
 The v1 scope needed about 67 h against 42 available, so about 35% of it is cut now. Nothing on the never-cut list depends on a stretch item.
@@ -434,7 +437,7 @@ smartdoc-ai/
 
 ### 5.1 Public REST (NestJS, `/api`, OpenAPI via `@nestjs/swagger`)
 
-> **As built:** the contract is [docs/openapi.yaml](openapi.yaml), written by hand.
+> **As built:** the contract is [docs/openapi.yaml](../openapi.yaml), written by hand.
 > `apps/api/test/openapi.e2e-spec.ts` fails when it and the mounted routes differ. The table below is the original plan.
 > Not built: `POST /api/documents/:id/retry`, `GET /api/admin/requests` and `PATCH`/`POST /api/admin/users`.
 
@@ -866,7 +869,7 @@ response_relevancy: ">= 0.80"
 
 ## 10. AWS infrastructure
 
-> **Superseded (2026-10-27)** by [DEPLOY_PLAN.md](DEPLOY_PLAN.md):
+> **Superseded (2026-10-27)** by [runbooks/deploy-prod.md](../runbooks/deploy-prod.md) and [ADR-009](../adr/009-compute-and-edge.md):
 > - the production design is Lambda in a VPC with a NAT instance and Aurora Serverless v2;
 > - SmartDoc runs on localhost only until production is wanted.
 >

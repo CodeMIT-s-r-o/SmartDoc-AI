@@ -63,8 +63,9 @@ UPDATE response_cache
 RETURNING answer, sources, cited_sources, original_cost_usd
 """
 
-# Guarded insert (docs/IMPLEMENTATION_PLAN.md §9): stored only while every document in the scope
-# is still the tenant's and ready, so a concurrent delete cannot leave its snippets in the cache.
+# Guarded insert (docs/planning/IMPLEMENTATION_PLAN.md §9): stored only while every document in
+# the scope is still the tenant's and ready, so a concurrent delete cannot leave its snippets in
+# the cache.
 STORE = """
 INSERT INTO response_cache (tenant_id, scope_hash, question_norm_hash, answer, sources,
                             cited_sources, original_cost_usd, expires_at)

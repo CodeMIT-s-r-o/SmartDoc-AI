@@ -1,4 +1,4 @@
-# Pre-registered claims (docs/IMPLEMENTATION_PLAN.md §8), written on 2026-10-23 before the first
+# Pre-registered claims (docs/planning/IMPLEMENTATION_PLAN.md §8), written on 2026-10-23 before the first
 # official run (only dry runs on unreviewed items existed). Each claim is tested once, in the 2.7
 # sweeps, and reported even when it fails or is inconclusive. Deltas use a paired bootstrap over
 # question ids (1,000 resamples, 95 % CI); a delta "holds" only if its interval excludes zero.

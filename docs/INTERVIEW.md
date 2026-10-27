@@ -8,7 +8,7 @@ the unreviewed golden set are marked **dry run**.
 
 - **Not deployed.** It runs locally against real dev Cognito and S3. The production design is
   written and its riskiest part (SSE through CloudFront and Lambda) is proven by a spike, but I
-  chose not to pay for an idle demo ([DEPLOY_PLAN.md](DEPLOY_PLAN.md)).
+  chose not to pay for an idle demo ([deploy-prod.md](runbooks/deploy-prod.md)).
 - **Quality numbers are preliminary.** The golden set (40 items) waits for my review, so its
   figures are a dry run. The relevance gate is not calibrated yet: it refused 0 of 7 unanswerable
   questions.

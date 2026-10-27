@@ -1,4 +1,4 @@
-# Initial gates (docs/IMPLEMENTATION_PLAN.md §8). Changed only deliberately, never to make a run pass.
+# Initial gates (docs/planning/IMPLEMENTATION_PLAN.md §8). Changed only deliberately, never to make a run pass.
 
 # Tier 1: retrieval, deterministic, no API calls (CI)
 recall_at_5: '>= 0.85'
