@@ -663,3 +663,44 @@ container) and the embeddings are weaker for Slovak.
   This explains the sporadic timeouts in the parallel `make check` (health, CDK and documents
   e2e tests pass alone).
 
+## 2026-10-26: CI on GitHub Actions and the deployment plan
+
+**Result:** `.github/workflows/ci.yml` runs on every push to `main` and every pull request, with
+the same make targets as a laptop and no secrets.
+
+| Job | What it runs |
+|---|---|
+| Lint, types, unit tests | `make lint`, `make typecheck`, `make test` |
+| Database tests and offline eval | Postgres + pgvector through compose (roles from `init-roles.sh`), migrations from the host, `make test-db`, then `make eval-ci` |
+| Secret scan | gitleaks over the full history (`--redact`) |
+
+- **Offline eval:** `make eval-ci` restores the committed fixture and runs tier 1 without any API
+  call. The run uploads its results as an artifact.
+- **Gates:** `make eval` gained `--fail-on`. CI gates on `cross_tenant_leaks` only: the quality
+  thresholds would fail today and become gates after the calibration in 2.7. Until the golden set
+  is reviewed, CI includes the unreviewed items and its results say so.
+- **gitleaks:** runs from its official image, because gitleaks-action needs a license for
+  organization repositories. Git's `safe.directory` is set through environment variables,
+  because the container's user does not own the checkout.
+- **Migrations:** `eval-ci.sh` now migrates from the host, so CI never has to build the API
+  image.
+
+**Deployment plan:** [DEPLOY_PLAN.md](DEPLOY_PLAN.md) orders Blocks 2.2 and 2.3 into four phases
+with a check after each, and lists the prerequisites only the account owner can do.
+- **Same shape as randevu and grosik:**
+  - Lambda behind CloudFront;
+  - Aurora Serverless v2 through the Data API (pauses when idle);
+  - Secrets Manager;
+  - `cdk deploy` from GitHub Actions through OIDC after a green CI run.
+- **Why not the single EC2 instance of the original plan:** ≈ $3–7 a month instead of $7–21, and
+  no server to run.
+- **Already in the account** (from the other two projects): the `codemit.sk` hosted zone, the
+  GitHub OIDC provider and the CDK bootstrap in both regions.
+- **Image builds:** the repository is public, so the arm64 images build on GitHub's free native
+  arm64 runners.
+- **Riskiest piece:** SSE through CloudFront and two Lambda Function URLs. Phase 1 is a spike that
+  proves it; EC2 stays as the fallback for the compute.
+
+**Local ports:** two other local projects publish Postgres on 5432 and 5433. SmartDoc ran with
+`DB_PORT=5434 AI_PORT=8001`.
+

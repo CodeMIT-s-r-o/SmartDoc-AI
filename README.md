@@ -1,5 +1,7 @@
 # SmartDoc AI
 
+[![CI](https://github.com/CodeMIT-s-r-o/SmartDoc-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeMIT-s-r-o/SmartDoc-AI/actions/workflows/ci.yml)
+
 > Production-grade RAG with measured cost controls.
 
 Invited users upload internal PDFs (manuals, policies) and chat with them. Answers stream in with page-level citations,
@@ -10,7 +12,8 @@ by a number the repo can reproduce.
 deployed with CDK: upload, ingestion, streaming chat with page citations, cost per answer, feedback and per-user daily
 budgets, an exact answer cache, standalone rewrite of follow-up questions and upload dedup. Next: the eval harness and
 calibration; AWS deployment is postponed until after them. Not deployed yet, no other users. Progress and measurements:
-[docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan: [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md).
+[docs/BUILD_LOG.md](docs/BUILD_LOG.md); the plan: [docs/PLAN_SUMMARY.md](docs/PLAN_SUMMARY.md); deployment:
+[docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md).
 The planned demo URL is https://smartdoc.codemit.sk.
 
 ---
@@ -50,7 +53,9 @@ SmartDoc AI is a portfolio project. It is built to be defended in a technical in
 
 ## Architecture
 
-The target production layout. Today the same containers run locally with Docker Compose.
+The containers as they run today with Docker Compose, in the originally planned single-EC2 production layout.
+[DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md) replaces it with Lambda and Aurora Serverless v2 (the shape of the other CodeMIT
+projects) once a streaming spike passes; the diagram changes with that decision.
 
 ```mermaid
 flowchart LR
@@ -104,8 +109,8 @@ Details: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) §2 (request
 | Data | PostgreSQL 18 + pgvector 0.8 (`halfvec(1536)`, HNSW) + full-text search |
 | LLM | `gpt-6-luna` (Responses API, `effort: none`), `text-embedding-3-small` |
 | Auth / storage | Amazon Cognito (invite-only), Amazon S3 |
-| Infra | Docker Compose on EC2 (Graviton), CloudFront + WAF, Caddy, AWS CDK (TypeScript) |
-| CI/CD | GitHub Actions: OIDC → ECR (arm64) → SSM deploy |
+| Infra | AWS CDK (TypeScript). Planned: CloudFront, Lambda (container images), Aurora Serverless v2; EC2 as fallback |
+| CI/CD | GitHub Actions: lint, types, tests, DB tests, offline eval, gitleaks. Planned deploy: OIDC → `cdk deploy` |
 | Observability | Postgres ledger and quality tables (source of truth), Langfuse Cloud EU (traces) |
 | Evaluation | In-process Python harness, RAGAS (judge metrics only) |
 

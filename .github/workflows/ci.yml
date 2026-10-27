@@ -1,0 +1,102 @@
+# Every push and pull request: the same make targets as on a laptop, no secrets, no API calls.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  checks:
+    name: Lint, types, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: services/ai/uv.lock
+      - name: Install
+        run: |
+          yarn install --immutable
+          yarn build:contracts
+          (cd services/ai && uv sync --locked)
+      - run: make lint
+      - run: make typecheck
+      - run: make test
+
+  database:
+    name: Database tests and offline eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: services/ai/uv.lock
+      - name: Install
+        run: |
+          yarn install --immutable
+          yarn build:contracts
+          (cd services/ai && uv sync --locked)
+      - name: Start Postgres (pgvector, roles from deploy/db/init-roles.sh)
+        run: |
+          cp .env.example .env
+          touch .env.dev-aws
+          docker compose up -d --wait db
+      - name: Migrate
+        env:
+          MIGRATE_DATABASE_URL: >-
+            postgresql://smartdoc_owner:smartdoc_owner_dev@127.0.0.1:5432/smartdoc,postgresql://smartdoc_owner:smartdoc_owner_dev@127.0.0.1:5432/smartdoc_test,postgresql://smartdoc_owner:smartdoc_owner_dev@127.0.0.1:5432/smartdoc_eval
+        run: yarn workspace @smartdoc/api db:migrate
+      - run: make test-db
+      - name: Eval, tier 1 (committed fixture, no API calls)
+        # Until the golden set is reviewed the unreviewed items are included (results say so).
+        # Quality thresholds become gates after calibration (Block 2.7); leaks are a gate now.
+        run: make eval-ci ARGS="--include-pending --fail-on cross_tenant_leaks"
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/results/*.json
+          if-no-files-found: ignore
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: gitleaks over the full history
+        # The binary from the official image; gitleaks-action needs a license for org repositories.
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo
+          ghcr.io/gitleaks/gitleaks:v8.30.1
+          git --redact --no-banner --verbose .
