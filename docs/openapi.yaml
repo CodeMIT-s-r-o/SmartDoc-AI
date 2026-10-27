@@ -1,0 +1,731 @@
+openapi: 3.1.0
+info:
+  title: SmartDoc AI API
+  version: 0.1.0
+  summary: Upload PDFs and chat with them, with page citations and per-user cost controls.
+  description: |
+    The public REST API of the NestJS service. The web app is its only client.
+
+    - **Auth:** every route except `GET /api/health` needs a Cognito **access token**
+      (`Authorization: Bearer …`). The tenant is the token's `sub`. Another tenant's resources
+      answer 404, never 403.
+    - **Errors:** RFC 9457 problem details (`application/problem+json`) with a machine-readable
+      `code` the web app switches on.
+    - **Rate limits:** 10 uploads per hour and 30 chat messages per minute per user; above that,
+      429 `RATE_LIMITED`.
+    - **Chat** streams Server-Sent Events. The event contract is the zod schema in
+      `packages/contracts/src/sse.ts` (JSON Schema: `packages/contracts/schema/sse-events.schema.json`).
+
+    `test/openapi.e2e-spec.ts` fails when a route is mounted but not described here, or the other
+    way round.
+servers:
+  - url: http://localhost:5173
+    description: Local stack (Vite proxies /api to the api container)
+security:
+  - cognito: []
+tags:
+  - name: health
+  - name: me
+  - name: documents
+  - name: conversations
+  - name: messages
+  - name: admin
+    description: Requires the Cognito group `admin`.
+  - name: internal
+    description: Service to service (the AI service), outside `/api`. Never routed by the edge.
+
+paths:
+  /api/health:
+    get:
+      tags: [health]
+      summary: Liveness and dependencies
+      security: []
+      responses:
+        '200':
+          description: Database and AI service are up
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReport' }
+        '503':
+          description: The database is down (the full report, not a problem document)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthReport' }
+
+  /api/me:
+    get:
+      tags: [me]
+      summary: The signed-in user and today's AI spend (the header's usage chip)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/documents:
+    get:
+      tags: [documents]
+      summary: The caller's documents, newest first
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Document' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [documents]
+      summary: Reserve a document and get a presigned S3 POST (upload step 1)
+      description: |
+        The browser then POSTs the file straight to S3 with `upload.fields`. With `sha256`, a file
+        the caller already has answers 409 `DUPLICATE_DOCUMENT`, a reservation that is still
+        `uploading` is resumed, and S3 rejects bytes that do not match the hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDocumentRequest' }
+      responses:
+        '201':
+          description: Reserved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateDocumentResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`DUPLICATE_DOCUMENT`, with `existingDocumentId`'
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Problem'
+                  - type: object
+                    properties:
+                      existingDocumentId: { type: string, format: uuid }
+        '422':
+          description: '`FILE_TOO_LARGE` (over 20 MB) or `QUOTA_EXCEEDED`'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/documents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [documents]
+      summary: One document, including its embedding cost
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [documents]
+      summary: Delete a document in any state
+      description: The document leaves chat scope at once, whatever its state.
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/documents/{id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [documents]
+      summary: Validate the uploaded object and queue ingestion (upload step 2)
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`UPLOAD_NOT_FOUND` (no object in S3 yet) or `INVALID_STATE` (already completed)'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: '`INVALID_FILE` (not a PDF, or a size that differs from the reservation)'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /api/documents/{id}/file:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [documents]
+      summary: A 5-minute presigned GET for a ready document (inline PDF)
+      description: The web app opens `url + '#page=' + n` in a new tab.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignedUrl' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`INVALID_STATE`: the document is not ready'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "`UNAVAILABLE`: the local stack's AWS credentials expired (`make creds`)"
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /api/conversations:
+    get:
+      tags: [conversations]
+      summary: The caller's 50 most recently updated conversations
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [conversations]
+      summary: Start a conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/conversations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [conversations]
+      summary: A conversation with its messages, oldest first
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversation, messages]
+                properties:
+                  conversation: { $ref: '#/components/schemas/Conversation' }
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [conversations]
+      summary: Rename a conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [conversations]
+      summary: Delete a conversation and its messages
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/conversations/{id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [conversations]
+      summary: Ask a question; the answer streams as Server-Sent Events
+      description: |
+        Events, in order: `ack`, `meta`, `sources`, `token`…, then exactly one of `done` or
+        `error`. Framing: `event: <name>` and `data: <json>`, separated by a blank line.
+
+        `clientMessageId` makes the call idempotent. A repeat after the answer finished returns
+        that turn as JSON (no second LLM call); a repeat while it is still streaming answers 409
+        `IN_PROGRESS`. Each call reserves budget first; over the user's or the app's daily limit it
+        answers 429 `BUDGET_EXCEEDED` with `Retry-After`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendMessageRequest' }
+      responses:
+        '200':
+          description: The answer stream, or the stored turn for a repeated `clientMessageId`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE frames; see packages/contracts/schema/sse-events.schema.json
+              example: |
+                event: ack
+                data: {"requestId":"…","conversationId":"…","userMessageId":"…","assistantMessageId":"…"}
+
+                event: token
+                data: {"d":"Maternity leave lasts 34 weeks [1]."}
+
+                event: done
+                data: {"status":"answered","citedSources":[1],"costUsd":0.00024,…}
+            application/json:
+              schema:
+                type: object
+                required: [userMessage, assistantMessage]
+                properties:
+                  userMessage: { $ref: '#/components/schemas/Message' }
+                  assistantMessage: { $ref: '#/components/schemas/Message' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`IN_PROGRESS` (same clientMessageId still streaming) or `NO_DOCUMENTS` (nothing ready to ask about)'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: '`BUDGET_EXCEEDED` (with `scope`, `resetsAt` and `Retry-After`) or `RATE_LIMITED`'
+          headers:
+            Retry-After:
+              description: Seconds until the budget resets (BUDGET_EXCEEDED only)
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Problem'
+                  - type: object
+                    properties:
+                      scope: { type: string, enum: [user, app] }
+                      resetsAt: { type: string, format: date-time }
+
+  /api/messages/{id}/feedback:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [messages]
+      summary: Rate an answer (one rating per answer; a new one replaces it)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeedbackRequest' }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [messages]
+      summary: Remove the rating of an answer
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/admin/metrics:
+    get:
+      tags: [admin]
+      summary: Cost page aggregates from the ledger, across all tenants
+      parameters:
+        - name: from
+          in: query
+          description: First day (UTC), inclusive. Default 30 days before `to`.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          description: Last day (UTC), inclusive. Default today.
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminMetrics' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/feedback:
+    get:
+      tags: [admin]
+      summary: Rating counts and the 50 newest thumbs-downs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminFeedback' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /internal/documents/{id}/download-url:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [internal]
+      summary: A 5-minute presigned GET pinned to the uploaded S3 version, for the ingest worker
+      security:
+        - internalToken: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SignedUrl' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    cognito:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito access token (authorization code + PKCE in the web app)
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: A UUID; anything else answers 404
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: '`UNAUTHORIZED`: missing, invalid or expired token'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: '`FORBIDDEN`: admins only'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: '`NOT_FOUND`: does not exist or belongs to someone else'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ValidationFailed:
+      description: '`VALIDATION_FAILED`, with the failing fields'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: '`RATE_LIMITED`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details
+      required: [type, title, status, code, detail]
+      properties:
+        type: { type: string, const: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        code:
+          type: string
+          enum:
+            - BAD_REQUEST
+            - VALIDATION_FAILED
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - INVALID_STATE
+            - IN_PROGRESS
+            - NO_DOCUMENTS
+            - UPLOAD_NOT_FOUND
+            - UNPROCESSABLE
+            - INVALID_FILE
+            - FILE_TOO_LARGE
+            - QUOTA_EXCEEDED
+            - RATE_LIMITED
+            - BUDGET_EXCEEDED
+            - DUPLICATE_DOCUMENT
+            - UNAVAILABLE
+            - INTERNAL
+        detail: { type: string }
+      additionalProperties: true
+
+    HealthReport:
+      type: object
+      required: [status, db, ai, version]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        db: { type: string, enum: [up, down] }
+        ai: { type: string, enum: [up, down] }
+        version: { type: string }
+
+    Me:
+      type: object
+      required: [id, email, isAdmin, dailyLimitUsd, spentTodayUsd]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        isAdmin: { type: boolean }
+        dailyLimitUsd: { type: number }
+        spentTodayUsd: { type: number }
+
+    CreateDocumentRequest:
+      type: object
+      required: [filename, sizeBytes]
+      properties:
+        filename: { type: string, minLength: 1, maxLength: 255, pattern: '(?i)\.pdf$' }
+        sizeBytes: { type: integer, minimum: 1, maximum: 20971520 }
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Lowercase hex SHA-256 of the file (WebCrypto)
+
+    CreateDocumentResponse:
+      type: object
+      required: [document, upload]
+      properties:
+        document: { $ref: '#/components/schemas/Document' }
+        upload:
+          type: object
+          required: [url, fields, expiresAt]
+          properties:
+            url: { type: string, format: uri }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: Form fields for the S3 POST, sent before the file
+            expiresAt: { type: string, format: date-time }
+
+    Document:
+      type: object
+      required:
+        [
+          id,
+          title,
+          originalFilename,
+          status,
+          sizeBytes,
+          pageCount,
+          chunkCount,
+          errorCode,
+          embedCostUsd,
+          createdAt,
+          readyAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        originalFilename: { type: string }
+        status: { type: string, enum: [uploading, queued, processing, ready, failed, deleting] }
+        sizeBytes: { type: integer }
+        pageCount: { type: [integer, 'null'] }
+        chunkCount: { type: [integer, 'null'] }
+        errorCode:
+          type: [string, 'null']
+          description: Why ingestion failed, e.g. NO_TEXT_LAYER or ENCRYPTED
+        embedCostUsd: { type: [number, 'null'] }
+        createdAt: { type: string, format: date-time }
+        readyAt: { type: [string, 'null'], format: date-time }
+
+    SignedUrl:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+
+    Conversation:
+      type: object
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Citation:
+      type: object
+      required: [n, chunkId, documentId, title, section, pageStart, pageEnd, score, cited]
+      properties:
+        n: { type: integer, minimum: 1 }
+        chunkId: { type: string, format: uuid }
+        documentId: { type: string, format: uuid }
+        title: { type: string }
+        section: { type: [string, 'null'] }
+        pageStart: { type: integer }
+        pageEnd: { type: integer }
+        snippet:
+          type: string
+          description: Absent once the source document is deleted
+        score: { type: number }
+        cited: { type: boolean, description: Whether the answer cites it }
+
+    Message:
+      type: object
+      required: [id, role, content, status, citations, costUsd, latencyMs, rating, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        status:
+          type: string
+          enum: [streaming, complete, aborted, error, no_answer, cached, degraded]
+        citations:
+          type: [array, 'null']
+          items: { $ref: '#/components/schemas/Citation' }
+        costUsd: { type: [number, 'null'], description: Answers only, from the ledger }
+        latencyMs:
+          type: [object, 'null']
+          properties:
+            ttft: { type: [number, 'null'] }
+            total: { type: [number, 'null'] }
+        rating: { type: [integer, 'null'], enum: [1, -1, null] }
+        createdAt: { type: string, format: date-time }
+
+    SendMessageRequest:
+      type: object
+      required: [clientMessageId, content]
+      properties:
+        clientMessageId:
+          type: string
+          format: uuid
+          description: Generated by the client; the idempotency key of the turn
+        content: { type: string, minLength: 1, maxLength: 2000 }
+        documentIds:
+          type: array
+          items: { type: string, format: uuid }
+          minItems: 1
+          maxItems: 50
+          description: Defaults to all of the caller's ready documents
+        bypassCache: { type: boolean, description: Ask for a fresh answer, not a cached one }
+
+    FeedbackRequest:
+      type: object
+      required: [rating]
+      description: Reasons and comment are accepted only with rating -1.
+      properties:
+        rating: { type: integer, enum: [1, -1] }
+        reasons:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            enum: [incorrect, not_in_documents, wrong_citation, incomplete, other]
+        comment: { type: string, maxLength: 1000 }
+
+    AdminMetrics:
+      type: object
+      required: [range, spendByDay, requests, promptCache, savings]
+      properties:
+        range:
+          type: object
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        spendByDay:
+          type: array
+          description: Per Europe/Bratislava day and ledger purpose
+          items:
+            type: object
+            properties:
+              day: { type: string, format: date }
+              purpose: { type: string, enum: [chat, rewrite, query_embed, doc_embed, judge, eval] }
+              costUsd: { type: number }
+              calls: { type: integer }
+        requests:
+          type: object
+          properties:
+            total: { type: integer }
+            answered: { type: integer }
+            refused: { type: integer }
+            degraded: { type: integer }
+            exactCacheHits: { type: integer }
+            exactCacheHitRate: { type: number }
+            answeredP50Usd: { type: number }
+            meanUsd: { type: number }
+            totalUsd: { type: number }
+        promptCache:
+          type: object
+          properties:
+            inputTokens: { type: integer }
+            cachedTokens: { type: integer }
+            cacheWriteTokens: { type: integer }
+            cachedShare: { type: number }
+        savings:
+          type: array
+          items:
+            type: object
+            properties:
+              mechanism: { type: string }
+              basis: { type: string, enum: [estimated, replay] }
+              count: { type: integer }
+              savedUsd: { type: number }
+
+    AdminFeedback:
+      type: object
+      required: [up, down, items]
+      properties:
+        up: { type: integer }
+        down: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              messageId: { type: string, format: uuid }
+              createdAt: { type: string, format: date-time }
+              question: { type: [string, 'null'] }
+              answer: { type: string, description: The first 500 characters }
+              status: { type: string }
+              reasons: { type: array, items: { type: string } }
+              comment: { type: [string, 'null'] }
+              costUsd: { type: [number, 'null'] }
+              requestId: { type: [string, 'null'], format: uuid }
+              traceId: { type: [string, 'null'] }

@@ -1,157 +1,94 @@
 # Deployment plan: smartdoc.codemit.sk
 
-How the working local stack becomes a public demo, in the same serverless shape as **randevu** and
-**grosik**: Lambda behind CloudFront, Aurora Serverless v2 that pauses when idle, Secrets Manager,
-and `cdk deploy` from GitHub Actions through OIDC after every green CI run on `main`.
+**Decision (2026-10-27): SmartDoc runs on localhost only.** Nothing is deployed and nothing
+deploys by itself:
+- **GitHub:** the only workflow is CI (`ci.yml`: lint, types, tests, DB tests, offline eval,
+  gitleaks). It has no AWS credentials, no `id-token` permission and no secrets.
+- **AWS:** only the two dev stacks the local stack needs (Cognito and the documents bucket).
 
-This replaces the single-EC2 layout of [IMPLEMENTATION_PLAN.md §10](IMPLEMENTATION_PLAN.md#10-aws-infrastructure),
-which stays below as the fallback. It covers Blocks 2.2 (deploy spike) and 2.3 (CI/CD and the
-real app).
+This file is the plan for the day production is wanted, and the [procedure](#how-to-deploy) to
+get there.
 
-## Why the change
+## What exists today
 
-| | EC2 (§10) | Lambda + Aurora (randevu, grosik) |
+| Where | What | Why |
 |---|---|---|
-| Monthly, demo traffic | ≈ $7.3 until 2026-12-31 (T4g trial), then ≈ $21.3 | ≈ $3–7 |
-| Idle month | ≈ $7–21 (the instance runs anyway) | ≈ $2 (storage, secrets, images) |
-| Operations | OS patches, Docker, Caddy, disk, `pg_dump` timer | none; Aurora backups are built in |
-| Shared with the other projects | nothing | CI role, cert stack, zone import, image builds, `deploy.yml`, smoke test |
-| Costs us | | streaming through Lambda, a Data API adapter in Python, SQS for ingestion, cold starts |
+| AWS `SmartDoc-Dev-Auth` | Cognito user pool, PKCE client, `admin` group | Sign-in on localhost |
+| AWS `SmartDoc-Dev-Storage` | `smartdoc-dev-docs-…` bucket, the `SmartDocDevApp` role | Uploads and PDF links on localhost (`make creds`) |
+| AWS SSM | `/smartdoc/dev/config/*` | Settings the local stack reads |
+| GitHub | `ci.yml`, Environment `prod` restricted to `main` | CI; the environment is unused until a deploy workflow exists |
+| Shared with randevu and grosik | Route 53 zone `codemit.sk`, GitHub OIDC provider, CDK bootstrap in eu-central-1 and us-east-1 | Ready for Step 2, nothing to create |
 
-## Target in one picture
+Removed after the streaming spike: the `SmartDoc-Spike` stack, its log groups and its two images in
+the CDK asset repository that randevu and grosik share. Nothing from the spike is left in AWS.
+
+## Target: Lambda in a VPC with a NAT instance
+
+The same edge and deploy pipeline as randevu and grosik, with one difference: the Lambdas run inside
+a VPC and talk to Aurora directly. The app keeps its Postgres drivers (psycopg, node-postgres),
+so no Data API rewrite is needed.
 
 ```text
 browser ──► CloudFront (smartdoc.codemit.sk, ACM certificate in us-east-1)
              ├─ default ─► S3 SPA bucket (OAC; response headers policy with the CSP)
              └─ /api/*  ─► Lambda Function URL (AWS_IAM via OAC, RESPONSE_STREAM)
-                            NestJS API (Lambda Web Adapter)
-                             ├─ SigV4, streamed ─► Lambda Function URL: FastAPI chat (Python)
-                             ├─ SQS ingest ──────► Lambda: ingest worker (same Python image)
-                             └─ Data API ───────► Aurora Serverless v2, PostgreSQL 17 + pgvector,
-                                                  min 0 ACU (pauses when idle), no NAT, no VPC Lambdas
-EventBridge Scheduler (hourly, flexible window) ─► API housekeeping
-Secrets Manager smartdoc/prod/app · Cognito prod pool · S3 documents · CloudWatch alarms · AWS Budget
+
+VPC, 2 AZs
+├─ public subnet ─────── NAT instance (fck-nat, t4g.nano) ─► internet: OpenAI, Cognito, Secrets Manager, SQS
+├─ private subnets ───── Lambda: api (NestJS, Lambda Web Adapter, streaming)
+│   (egress via NAT)       ├─ SigV4, streamed ─► Lambda: ai (FastAPI, Lambda Web Adapter, streaming)
+│                          └─ SQS ingest ──────► Lambda: ingest worker (same Python image)
+├─ isolated subnets ──── Aurora Serverless v2, PostgreSQL 17 + pgvector, min 0 ACU (pauses when idle)
+└─ S3 gateway endpoint (free): documents bucket without the NAT
+EventBridge Scheduler (hourly) ─► api housekeeping · Secrets Manager smartdoc/prod/app · CloudWatch alarms · AWS Budget
 ```
 
-## Status
+### Why VPC + NAT
 
-| Piece | State |
-|---|---|
-| AWS account 163897793430, region eu-central-1 (with randevu and grosik) | exists |
-| Route 53 zone `codemit.sk` (`Z098890928LZU3VCIGGZE`, owned by codemit-website), imported like randevu | exists |
-| GitHub OIDC provider in the account | exists |
-| CDK bootstrap in eu-central-1 and us-east-1 | exists (randevu and grosik deploy there) |
-| Dev Storage + Auth stacks (Block 1.2) | deployed |
-| CI (`.github/workflows/ci.yml`): lint, types, tests, DB tests, offline eval, gitleaks | done |
-| Phase 1: streaming spike | **passed** 2026-10-27 (below) |
-| App changes for Lambda (below) | to build |
-| Stacks: `SmartDoc-Ci`, `SmartDoc-Prod-{Cert,Data,Async,App,Ops}` | to build |
-| `deploy.yml` | to build |
+| Option | Extra cost a month | App changes | Verified |
+|---|---|---|---|
+| **VPC + NAT instance (chosen)** | ≈ $7.3 (t4g.nano $3.5 + public IPv4 $3.65 + disk) | small: the drivers stay | the standard pattern |
+| Data API, no VPC (randevu, grosik) | $0 | a Data API layer in Python and NestJS (≈ 1 extra day) | in the other projects |
+| VPC + NAT Gateway | ≈ $38 + $0.052/GB | small | standard, but too expensive for a demo |
+| VPC + IPv6 egress only | $0 | small | **no**: every endpoint has an AAAA record, but the clients' IPv4 fallback is untested |
 
-## Prerequisites (only you can do these)
+The NAT instance is the only always-on part. Everything else is paid per use. If cost matters more
+than effort later, the IPv6 option is a one-hour spike away (the endpoints were checked on
+2026-10-27: api.openai.com, cognito-idp, secretsmanager and sqs all resolve to IPv6).
 
-- [ ] **OpenAI project `smartdoc-prod`** with an *enforced* monthly hard limit ($20), its own key
-      and a $10–20 prepaid balance.
-- [ ] **GitHub Environment `prod`** in the SmartDoc-AI repository, restricted to `main`
-      (Settings → Environments). Optional: a required reviewer for the first deploys.
-- [ ] **Prod secrets** after the Data stack exists: `scripts/init-secrets.sh prod` asks for the
-      OpenAI key and generates the internal token, as in randevu (names only in
-      `docs/runbooks/prod-secrets.md`, never values).
-- [ ] **Invite yourself** to the prod user pool: `make invite STAGE=prod EMAIL=… ADMIN=1`.
+### What the app needs before it can run in Lambda
 
-**Image builds:** the repository is **public**, so GitHub's native arm64 runners
-(`ubuntu-24.04-arm`) are free. The images build natively instead of under QEMU (randevu and grosik
-are private and use QEMU).
-
-## What changes in the app
-
-1. **Database access through the Data API.** The Lambdas stay outside the VPC, so they reach OpenAI
-   and Cognito without a NAT.
-   - NestJS: Drizzle's `aws-data-api/pg` driver in AWS and `node-postgres` locally and in tests, as
-     in grosik and randevu. Raw `db.execute(sql…)` results are read through one helper that
-     handles both result shapes.
-   - Python: a small `Db` interface with two implementations, psycopg (local, tests, CI) and
-     `rds-data` (AWS). Vectors go in as text with `::halfvec` casts. Transactions use
-     `BeginTransaction`/`CommitTransaction`. The Data API limits (1 MB per result, 45 s per
-     statement) are far above what retrieval returns.
-   - The database tests run against both implementations' SQL (the psycopg one in CI), and the
-     smoke test exercises the Data API one.
-2. **Ingestion through SQS instead of the Postgres job queue.** "Upload complete" sends one message
-   per document. The worker Lambda (the same Python image, a second handler) processes it, and SQS
-   handles retries (`maxReceiveCount: 3`, then a DLQ with an alarm). Locally, ElasticMQ in compose
-   stands in for SQS, as in randevu. Lambda limits: 2 GB memory, 10 minute timeout, 512 MB `/tmp`,
-   with the sandboxed parser's resource limits kept.
-3. **Streaming through Lambda.** grosik polls; SmartDoc streams SSE, so both functions use the
-   Lambda Web Adapter with `AWS_LWA_INVOKE_MODE=response_stream` and Function URLs with
-   `InvokeMode: RESPONSE_STREAM`. NestJS calls the AI function's URL with a SigV4-signed `fetch`
-   and passes the stream through as it does today. **This is the riskiest piece, so it is spiked
-   first (Phase 1).**
-4. **No timers in the process.** The housekeeping tick (expired budget reservations, stuck
-   `streaming` messages) becomes a handler that EventBridge Scheduler invokes **hourly**, and
-   `reserve()` also releases expired reservations itself. Nothing on a timer may touch the
-   database more often than the auto-pause delay, or Aurora never pauses (≈ $50 a month at its
-   0.5 ACU idle floor).
-5. **Cold starts.** NestJS takes 1–3 s, the Python image 2–4 s, and Aurora ≈ 15 s to resume from a
-   pause.
-   - `/api/health` answers `503 db.resuming` while the database wakes up, as in grosik.
+1. **Ingestion through SQS.** "Upload complete" sends one SQS message with the job id. The worker
+   Lambda claims that job with the existing lease code (`SKIP LOCKED`, fenced state changes), so
+   the Postgres queue stays the source of truth. SQS retries 3 times, then moves the message to a
+   DLQ with an alarm. Locally the worker keeps polling, behind a `QUEUE_DRIVER` switch.
+2. **No timers in the process.** `ChatHousekeeping` (`setInterval`) becomes a handler that
+   EventBridge Scheduler calls hourly, and `reserve()` also releases expired reservations itself.
+   Anything that touches the database more often than the auto-pause delay keeps Aurora awake
+   (≈ $50 a month at its 0.5 ACU idle floor).
+3. **Lambda entry points.** The api and ai images run behind the Lambda Web Adapter with
+   `AWS_LWA_INVOKE_MODE=response_stream`. The api calls the ai Function URL with a SigV4-signed
+   `fetch` instead of `http://ai:8000`. The worker gets an SQS handler in the Python image.
+4. **Connections.** Pools of 1–2 connections per Lambda instance and reserved concurrency per
+   function (api 10, ai 10, worker 2), so Aurora's connection limit cannot be reached. RDS Proxy is
+   not needed at this scale.
+5. **Cold starts.** Measured in the spike: Node 0.8–1.0 s, Python 4.7 s. The real ai image imports
+   more, so expect 5–8 s; lazy imports help (the PDF parser is only for the worker). Aurora resumes
+   from a pause in ≈ 15 s.
+   - `/api/health` answers `503` while the database wakes up.
    - The web app shows "Waking up…" and retries.
-   - The auto-pause delay is 1 hour. Before an interview, open the app a minute early.
-6. **Secrets.** Secrets Manager `smartdoc/prod/app` (OpenAI key, internal token) is read at cold
-   start through `SECRETS_ID`, and CDK generates the database secret. Two secrets cost ≈ $0.80 a
-   month.
-7. **CloudFront in front of Function URLs.** With OAC, the browser must send
-   `x-amz-content-sha256` on every POST, as randevu does (`sha256Hex` already exists in the web
-   app). The CSP moves to a CloudFront response headers policy.
-8. **Migrations** run in a CDK `TriggerFunction` after every deploy whose image changed. A failure
-   fails the deploy, as in randevu.
+6. **Secrets.** `smartdoc/prod/app` in Secrets Manager (OpenAI key, internal token), read at cold
+   start. CDK generates the database secret.
+7. **The browser** sends `x-amz-content-sha256` on every POST (CloudFront OAC with Function URLs
+   requires it; `sha256Hex` already exists in the web app).
+8. **Migrations** run in a CDK `TriggerFunction` inside the VPC after every deploy whose image
+   changed. A failed migration fails the deploy.
 
-## CI/CD, as in randevu and grosik
+## Phase 1: streaming spike: passed
 
-- **`ci.yml`** stays as it is: lint, types, unit tests, DB tests, offline eval, gitleaks.
-- **`SmartDoc-Ci` stack**, deployed once by hand: the role `smartdoc-github-deploy`.
-  - Only jobs of this repository in the Environment `prod` can assume it, matched on the
-    repository's numeric IDs.
-  - It can only assume the CDK bootstrap roles and sign in to the public ECR.
-- **`deploy.yml`:**
-  - **Trigger:** `workflow_run` after CI succeeds on a push to `main`, or by hand
-    (`workflow_dispatch`).
-  - **Job:** environment `prod`, `concurrency: deploy-prod`, running on `ubuntu-24.04-arm`.
-  - **Steps:**
-    1. checkout of the CI run's SHA;
-    2. Node 24 and Yarn;
-    3. `yarn workspace @smartdoc/web build` (Cognito and API settings from the stack outputs);
-    4. buildx;
-    5. `configure-aws-credentials` with the role;
-    6. sign in to the public ECR;
-    7. `npx cdk deploy 'SmartDoc-Prod-*' --require-approval never --concurrency 3`.
-  - **Smoke test:**
-    - `GET /` contains `<div id="root">`;
-    - `/api/health` returns `version == run_number` and `db == ok`, with retries while Aurora
-      resumes;
-    - one SSE answer end to end, against a smoke tenant with a $0.01 budget.
-- **Merge to `main` → live in ≈ 10 minutes.** Rollback is "Run workflow" on the previous green
-  commit.
-
-## Order of work
-
-Each phase ends in a check that must pass before the next one starts.
-
-### Phase 1: Streaming spike (≈ 2 h): passed
-
-A throwaway `SmartDoc-Spike` stack with the same pieces and no app:
-- CloudFront → OAC → a Node Function URL (LWA, streaming), which calls a Python Function URL
-  (LWA, streaming, SigV4) that emits an SSE event every second for 90 s.
-
-**Check:**
-- the 90 s stream is not cut, and events arrive as they are sent, not buffered;
-- a request without OAC signing gets 403;
-- the cold-start time of each function is recorded.
-
-**If streaming fails:** the fallback is the EC2 layout below for the API and AI, with Aurora kept.
-It is not polling, because the chat UI depends on SSE.
-
-**Result (2026-10-27, [infra/spike/](../infra/spike/)):** three concurrent 90 s streams through
-CloudFront: Node alone, Node relaying Python, and the same as a POST with a payload hash.
+**Date and code:** 2026-10-27, [infra/spike/](../infra/spike/). Three concurrent 90 s SSE streams
+went through CloudFront → Node Function URL → Python Function URL. Both functions run behind the
+Lambda Web Adapter 1.0.0 in response-streaming mode.
 
 | Check | Result |
 |---|---|
@@ -166,80 +103,123 @@ CloudFront: Node alone, Node relaying Python, and the same as a POST with a payl
   `lambda:InvokeFunction` with the condition `lambda:InvokedViaFunctionUrl`. Without the second
   one, every call returned 403. CDK's `grantInvokeUrl` and the CloudFront OAC origin add only the
   first, so the stacks add the second explicitly:
-  - for CloudFront → API: `addPermission` with `invokedViaFunctionUrl: true`;
-  - for API → AI: a role policy statement.
+  - for CloudFront → api: `addPermission` with `invokedViaFunctionUrl: true`;
+  - for api → ai: a role policy statement.
 
-  randevu and grosik do not need this because their URLs are older.
-- **The Python cold start dominates.** The real AI image imports more (openai, pypdf, psycopg), so
-  expect 5–8 s.
-  - Lazy imports cut it down: the parser is needed only by the ingest handler.
-  - A cold demo request can wait ≈ 25 s in total, Aurora's resume included. The "Waking up…"
-    state covers that.
+  See [lib/spike-stack.ts](../infra/cdk/lib/spike-stack.ts). randevu and grosik do not need this
+  because their URLs are older.
 - **Log groups outlive `cdk destroy`.** The stacks set a retention, and outside prod a removal
   policy of `DESTROY`.
 
-### Phase 2: App changes (≈ 1 day)
+The spike ran outside a VPC. Moving the functions into a VPC changes their outbound path only;
+CloudFront still reaches the Function URLs the same way.
 
-Items 1–8 above, each behind a driver switch (`DB_DRIVER`, `QUEUE_DRIVER`), so `make up`, the tests
-and CI keep working unchanged.
+## How to deploy
 
-**Check:** `make check`, `make test-db` and `make eval-ci` are green, and the local stack runs with
-ElasticMQ.
+The steps in order, each with the check that must pass before the next. Total ≈ 1.5–2 days.
 
-### Phase 3: Stacks and the first deploy (≈ 4 h)
+### Step 0: Decide and prepare (you, 30 min)
+
+- [x] An OpenAI project `smartdoc-prod` with an *enforced* monthly hard limit and its own key
+      (2026-10-27).
+- [x] GitHub Environment `prod`, restricted to `main` (2026-10-27).
+- [ ] The monthly AWS budget for SmartDoc (suggested $20) and the e-mail for its alerts.
+
+### Step 1: App changes (≈ 0.5–1 day, one PR)
+
+Items 1–8 of [What the app needs](#what-the-app-needs-before-it-can-run-in-lambda). Each one sits
+behind a switch, so `make up`, the tests and CI stay as they are.
+
+**Check:** `make check`, `make test-db` and `make eval-ci` are green, and the local stack still
+works end to end.
+
+### Step 2: Stacks (≈ 4 h, one PR)
 
 Copy and adapt from randevu and grosik: `config.ts`, `zone.ts`, `ci-stack.ts`, `cert-stack.ts`,
-`images.ts`, `site.ts` (CSP), plus snapshot tests next to the existing ones.
+`images.ts`, `site.ts` (CSP). Add snapshot tests next to the existing ones.
 
 | Stack | Contents |
 |---|---|
-| **Cert** (us-east-1) | certificate for `smartdoc.codemit.sk` |
-| **Data** | Aurora (PG 17, pgvector, min 0 / max 2 ACU, Data API, 7-day backups, deletion protection), documents bucket (CORS for the domain only) |
-| **Async** | SQS ingest queue, DLQ, scheduler role |
-| **App** | three functions, Function URLs, CloudFront (SPA + `/api/*`), migrations trigger, hourly schedule |
-| **Ops** | alarms on errors, DLQ depth and throttles; AWS Budget $10 with alerts to `OWNER_EMAIL` |
+| `SmartDoc-Ci` (deployed once, by hand) | The role `smartdoc-github-deploy`: only this repository in the Environment `prod`, only the CDK bootstrap roles and a public ECR sign-in |
+| `SmartDoc-Prod-Cert` (us-east-1) | Certificate for `smartdoc.codemit.sk` |
+| `SmartDoc-Prod-Network` | VPC (2 AZs: public, private, isolated), fck-nat instance, S3 gateway endpoint |
+| `SmartDoc-Prod-Data` | Aurora (PG 17, pgvector, min 0 / max 2 ACU, 7-day backups, deletion protection), documents bucket |
+| `SmartDoc-Prod-Auth` | Prod user pool (callbacks already parameterized in `config.ts`) |
+| `SmartDoc-Prod-App` | api, ai and worker Lambdas, Function URLs with both invoke permissions, SQS and DLQ, CloudFront (SPA + `/api/*`), migrations trigger, hourly schedule |
+| `SmartDoc-Prod-Ops` | Alarms (errors, DLQ depth, throttles, NAT instance status) and the AWS Budget |
 
-The prod Cognito pool already has the domain's callbacks parameterized (`config.ts`).
+**Check:** `cdk synth` and the snapshot tests pass; `cdk diff` against the account lists only new
+resources.
+
+### Step 3: First deploy by hand (≈ 1 h)
+
+```bash
+cd infra/cdk
+npx cdk deploy SmartDoc-Ci --profile codemit
+npx cdk deploy 'SmartDoc-Prod-*' --profile codemit
+scripts/init-secrets.sh prod    # written in Step 2, as in randevu: asks for the OpenAI key
+make invite STAGE=prod EMAIL=you@example.com ADMIN=1
+```
 
 **Check:**
-- `cdk diff` is clean after the deploy;
-- the smoke test passes;
+- `https://smartdoc.codemit.sk` signs in;
 - a 20 MB PDF ingests;
+- a question streams an answer with citations;
+- `/api/health` is `ok`;
 - `Bearer ey` appears 0 times in CloudWatch Logs.
 
-### Phase 4: Operations (≈ 1 h)
+### Step 4: Continuous deployment (≈ 1 h)
 
-- Backups are Aurora's own (7 days, point-in-time). **Restore drill:** restore into a new cluster,
-  compare row counts and record the RTO (Block 2.9).
-- `cdk gc` once a month: the CDK asset repository in ECR keeps every old image.
-- Re-run the cost replay against prod and reconcile tokens with the OpenAI usage export (±2 %).
+`.github/workflows/deploy.yml` as in randevu:
+- **Trigger:** `workflow_run` after CI succeeds on `main`, and `workflow_dispatch`.
+- **Job:** environment `prod`, `concurrency: deploy-prod`, runner `ubuntu-24.04-arm`. The
+  repository is public, so the native arm64 runner is free.
+- **Steps:**
+  1. web build;
+  2. OIDC role;
+  3. `cdk deploy 'SmartDoc-Prod-*'`;
+  4. smoke test: `/` has `<div id="root">`, and `/api/health` reports the new version, with
+     retries while Aurora resumes.
+
+**Check:** a merge to `main` is live in ≈ 10 minutes; "Run workflow" on an older green commit
+rolls back.
+
+### Step 5: Operations (≈ 1 h)
+
+- **Restore drill:** Aurora backups are built in (7 days, point-in-time). Restore into a new
+  cluster, compare row counts and record the RTO.
+- **Measurements:** re-run the cost replay against prod and reconcile tokens with the OpenAI usage
+  export (±2 %).
+- **Housekeeping:** `cdk gc` monthly, because the CDK asset repository keeps every old image.
+
+### Pausing and removing
+
+- **Pause** (keep the data, stop the fixed cost):
+  - set the NAT instance's desired count to 0 (Aurora already pauses by itself);
+  - the site stays up, but answers fail until the NAT is back.
+- **Remove:**
+  1. `npx cdk destroy 'SmartDoc-Prod-*'`;
+  2. Aurora leaves a final snapshot, and the protected buckets stay until deleted by hand;
+  3. delete the `prod` Environment, or leave it: without a workflow it does nothing.
 
 ## Cost (estimate, demo traffic ≈ 6k answers a month)
 
 | Item | Monthly |
 |---|---|
-| Lambda, SQS, Scheduler, CloudFront | ≈ $0 (always-free tiers: 1M requests and 400k GB-s of Lambda, 1 TB of CloudFront) |
+| NAT instance (t4g.nano, public IPv4, 2 GB disk) | ≈ $7.3 |
 | Aurora Serverless v2: billed only while awake, plus storage (≈ 1 GB) | ≈ $1–4 |
+| Lambda, SQS, Scheduler, CloudFront | ≈ $0 (always-free tiers) |
 | Secrets Manager (2), CloudWatch logs and alarms, ECR images | ≈ $1.5–2.5 |
 | Route 53 | ≈ $0 (the zone is shared with codemit.sk) |
-| **AWS total** | **≈ $3–7** (grosik estimates $5–10 for the same shape) |
+| **AWS total** | **≈ $10–14** (≈ $3 paused) |
 | OpenAI | ≈ $1.2 (replay: $0.20 per 1k queries) |
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
-| SSE buffered or cut between CloudFront and Lambda | Phase 1 proves it before any app change; fallback is EC2 for the compute |
-| Aurora never pauses (a timer or a monitor keeps it awake) | Hourly housekeeping only; the health check reads the DB only when asked; the Budget alarm catches it within a day |
-| Cold start + resume ≈ 20 s on the first request | "Waking up…" state in the UI; open the app before a demo |
-| Data API adapter in Python differs from psycopg | The same SQL in both; DB tests in CI on psycopg, the smoke test on the Data API |
+| The NAT instance is a single point of failure | Auto-recovery and a status alarm; demo traffic tolerates minutes of downtime |
+| Aurora never pauses (a timer keeps it awake) | Hourly housekeeping only; the Budget alarm catches it within a day |
+| Cold start + resume ≈ 20–25 s on the first request | "Waking up…" in the UI; open the app before a demo |
+| Too many connections from Lambda | Small pools and reserved concurrency per function |
 | Cost run-away | Per-user and global daily budgets (done), OpenAI hard limit, AWS Budget |
-
-## Fallback: single EC2 instance
-
-If Phase 1 fails, the compute goes to the layout of IMPLEMENTATION_PLAN §10:
-- t4g.small with Caddy and the compose stack;
-- CloudFront with an origin-verify header;
-- deployed through an SSM `send-command`.
-
-It costs ≈ $7.3 a month until 2026-12-31 and ≈ $21.3 after.

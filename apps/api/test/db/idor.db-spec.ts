@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startDbTestApp, userClient } from '../support/db-app.js';
+import { key, mountedRoutes, type Route } from '../support/routes.js';
 
 /**
  * Tenant isolation, generated from the routes the app actually mounts: user B calls every `:id`
@@ -36,27 +37,6 @@ const ID_ROUTES: Record<string, { resource: Owned; body?: () => unknown }> = {
 
 /** Service-to-service routes: a user's access token alone must never open them. */
 const INTERNAL_ROUTES = ['POST /internal/documents/:id/download-url'];
-
-interface Route {
-  method: string;
-  path: string;
-}
-
-interface ExpressLayer {
-  route?: { path: string; methods: Record<string, boolean> };
-}
-
-/** Every route mounted on the underlying Express 5 app, with the global prefix applied. */
-function mountedRoutes(app: INestApplication): Route[] {
-  const express = app.getHttpAdapter().getInstance() as { router: { stack: ExpressLayer[] } };
-  return express.router.stack.flatMap(({ route }) =>
-    route
-      ? Object.keys(route.methods).map((m) => ({ method: m.toUpperCase(), path: route.path }))
-      : [],
-  );
-}
-
-const key = (r: Route) => `${r.method} ${r.path}`;
 
 describe.skipIf(!url)('tenant isolation over every mounted route', () => {
   const db = new pg.Pool({ connectionString: url, max: 2 });

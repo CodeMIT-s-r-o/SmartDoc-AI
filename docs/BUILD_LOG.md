@@ -771,3 +771,26 @@ stays only as the fallback.
   403 until both were granted. randevu and grosik have older URLs and do not need it.
 - **Cost:** a few cents. The stack is destroyed; its two empty log groups were left behind
   (`cdk destroy` keeps log groups by default).
+
+## 2026-10-27: Local only; production design is VPC + NAT; OpenAPI
+
+**Decision:** SmartDoc runs on localhost only. [DEPLOY_PLAN.md](DEPLOY_PLAN.md) keeps the production
+design and a step-by-step procedure (≈ 1.5–2 days) for when it is wanted.
+
+- **Production design:** Lambda in a VPC with a NAT instance (fck-nat on a t4g.nano), talking to
+  Aurora Serverless v2 directly. It costs ≈ $7 a month more than the Data API design of randevu and
+  grosik, and saves the Data API layer in Python and NestJS (≈ 1 day). A NAT Gateway (≈ $38 a month)
+  was too expensive for a demo.
+- **IPv6-only egress** would be free, and every endpoint the Lambdas call has an AAAA record. It is
+  left as an untested option.
+- **Nothing deploys:**
+  - GitHub has only `ci.yml`, with no AWS credentials, no `id-token` permission and no secrets.
+  - AWS has only the dev Auth and Storage stacks the local stack needs.
+  - Nothing from the spike is left: its stack, log groups and two images in the shared CDK
+    asset repository are deleted.
+- **OpenAPI:** [openapi.yaml](openapi.yaml) (3.1) describes the 19 mounted operations, request and
+  response shapes and problem codes. It is written by hand from the controllers, DTOs and zod
+  schemas.
+  - `apps/api/test/openapi.e2e-spec.ts` compares it with the routes Express actually mounts, so a
+    new or removed route fails CI until the spec follows.
+  - The route enumeration moved from the IDOR test to `test/support/routes.ts`.
