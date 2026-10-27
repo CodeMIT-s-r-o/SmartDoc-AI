@@ -5,7 +5,7 @@ AWS_ADMIN_PROFILE ?= codemit
 DEV_APP_PROFILE ?= smartdoc-dev-app
 DEV_STACKS := SmartDoc-Dev-Storage SmartDoc-Dev-Auth
 
-.PHONY: replay replay-report hooks secrets eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
+.PHONY: replay replay-report restore-drill hooks secrets eval eval-retrieval eval-fixture eval-ci eval-ingest eval-generate golden-review corpus-check budget help install up down reset-db logs ps lint typecheck test test-db check format spike \
 	cdk-bootstrap cdk-diff-dev cdk-dev dev-config creds invite login-url
 
 help: ## List targets
@@ -84,6 +84,9 @@ eval-retrieval: ## Retrieval metrics only, from the cached question embeddings (
 eval-fixture: ## Dump the ingested eval corpus to eval/fixtures (after the corpus or ingest changed)
 	docker compose exec -T db pg_dump -U smartdoc_owner -d smartdoc_eval -Fc -Z 9 --data-only \
 	  -t users -t documents -t chunks > eval/fixtures/eval_corpus.dump
+
+restore-drill: ## Back up DB (default smartdoc), restore into a scratch Postgres, verify, print the RTO
+	DB=$(or $(DB),smartdoc) scripts/restore-drill.sh
 
 eval-ci: ## Tier-1 eval as CI runs it: fresh database + committed fixture, no API calls
 	scripts/eval-ci.sh $(ARGS)

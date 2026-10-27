@@ -5,7 +5,7 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 
 | Block | Planned | Actual | Status | Notes |
 |---|---|---|---|---|
-| 0.1 Accounts | 1 h | | pending | OpenAI projects with enforced limits, AWS flat-rate eligibility, Langfuse (W2), corpus PDFs |
+| 0.1 Accounts | 1 h | not timed | done | OpenAI prod project with a limit, corpus PDFs; the flat-rate check is moot without a deployment; Langfuse not set up |
 | 0.2 OpenAI spike | 1 h | 0.1 h | done | see 2026-09-28 (Block 0.2 + 1.6) |
 | 0.3 Toolchain | 1 h | 0.3 h | done | NestJS 12 kept; see surprises |
 | 1.1 Compose, Dockerfiles, health | 2 h | 0.3 h | done | `make creds` done in 1.2 |
@@ -21,7 +21,12 @@ plus surprises and cuts as they happen. "Actual" is wall-clock time, AI-assisted
 | 2.1 Generated IDOR test, ledger formula tests | 1 h | 0.5 h | done (scope hash moves to 2.5) | see 2026-10-01 (Block 2.1) |
 | 2.4 Budgets: reservations, release, sweeper, 429 + banner | 1 h | 0.9 h | done | see 2026-10-05 (Block 2.4), ADR-008 |
 | 2.5 Exact cache, scope hash, savings, rewrite, upload dedup | 2 h | 1.5 h | done (rewrite pulled in from cut-if-behind) | see 2026-10-22 (Block 2.5), ADR-005 |
+| 2.2 Deploy spike | 4 h | not timed | done: streaming spike passed; deployment postponed (local only) | see 2026-10-27, DEPLOY_PLAN.md, ADR-009 |
+| 2.3 CI/CD | 3 h | not timed | CI done; deploy workflow postponed | see 2026-10-26 (CI) |
 | 2.6 Eval corpus, datasets, harness (tiers 1-2), CI fixture | 2.5 h | 2.5 h | in progress: golden review pending | see 2026-10-23 (Block 2.6) |
+| 2.7 Sweeps, calibration, judge, README table | 1.5 h | | waiting for the golden review | |
+| 2.8 Replay (3 arms) + Cost page | 2 h | not timed | done; token reconciliation pending | see 2026-10-26 (Block 2.8) |
+| 2.9 INTERVIEW, PRD, ARCHITECTURE, ADRs, restore drill | 1 h | not timed | done | see 2026-10-27 (Block 2.9) |
 
 ## 2026-09-26: Block 0.3 + 1.1 (scaffold)
 
@@ -794,3 +799,35 @@ design and a step-by-step procedure (≈ 1.5–2 days) for when it is wanted.
   - `apps/api/test/openapi.e2e-spec.ts` compares it with the routes Express actually mounts, so a
     new or removed route fails CI until the spec follows.
   - The route enumeration moved from the IDOR test to `test/support/routes.ts`.
+
+## 2026-10-27: Block 2.9 (docs and the restore drill)
+
+**Result:**
+- **Restore drill:** `make restore-drill` with the runbook [runbooks/restore.md](runbooks/restore.md).
+- **Docs:** [PRD.md](PRD.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [INTERVIEW.md](INTERVIEW.md).
+- **ADRs:** the last three, so there are now 10:
+  - [002 pgvector](adr/002-pgvector-single-store.md);
+  - [009 compute and edge](adr/009-compute-and-edge.md);
+  - [010 eval strategy](adr/010-eval-strategy.md).
+
+**Restore drill:** `pg_dump -Fc`, then a scratch Postgres with the same image and role bootstrap
+as compose, then `pg_restore` in one transaction. The check compares exact row counts in every
+table, then confirms that the app role can read and that a vector query returns rows.
+
+| Database | Dump | Restore | RTO |
+|---|---|---|---|
+| `smartdoc` (dev) | 1.5 MB | 2.3 s | 10.6 s |
+| `smartdoc_eval` | 7.6 MB | 2.1 s | 8.2 s |
+
+All 17 tables were equal in both. Most of the RTO is the scratch server's first start.
+
+- **Surprise:** `pg_restore` as the owner role stops at `COMMENT ON EXTENSION btree_gist` (only a
+  superuser may comment on an extension). Extensions belong to the bootstrap on a new host, so the
+  restore leaves the extension entries out (`pg_restore -l | grep -v " EXTENSION "`, then `-L`).
+
+**Measured for ADR-002** (eval corpus, 1,002 chunks):
+- **Sizes:** the embedding is 3,076 B; HNSW takes 4.1 KB per vector and GIN 1.9 KB per chunk;
+  11.9 KB per chunk in total (the plan estimated 9–10 KB).
+- **Retrieval:** p50 18.8 ms and p95 64.1 ms over 190 questions, warm.
+- **The planner does not use HNSW at this size:** `EXPLAIN ANALYZE` shows a sequential scan, which
+  is exact and cheaper here. EXPLAIN at 50k chunks is the open measurement.
